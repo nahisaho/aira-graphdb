@@ -1,18 +1,16 @@
 use std::collections::HashMap;
 use std::fs;
 use std::io::{self, BufRead, Write};
+use std::panic;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
-use std::panic;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use aira_graphdb::graph::{
-    InMemoryGraphStore, Properties, Value as GraphValue,
-};
-use aira_graphdb::query::{execute_query_with_dialect, CypherDialect};
+use aira_graphdb::graph::{InMemoryGraphStore, Properties, Value as GraphValue};
+use aira_graphdb::query::{CypherDialect, execute_query_with_dialect};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -38,11 +36,21 @@ struct GraphEdge {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
+struct VectorBlobRef {
+    offset: u64,
+    len: u32,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
 struct VectorRecord {
     id: String,
     corpus_id: String,
     namespace: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     values: Vec<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    blob_ref: Option<VectorBlobRef>,
     metadata: Value,
 }
 
@@ -108,8 +116,10 @@ struct CrashTracker {
 
 struct Server {
     db_path: PathBuf,
+    vector_blob_path: PathBuf,
     audit_log_path: PathBuf,
     state: State,
+    vector_values: HashMap<String, Vec<f64>>,
     cache_dirty: bool,
     batch_mode: bool,
     node_keys_by_corpus: HashMap<String, Vec<String>>,
@@ -173,17 +183,29 @@ impl CrashTracker {
 }
 
 impl Server {
+    const VECTOR_BLOB_MAGIC: &'static [u8; 4] = b"AGVB";
+    const VECTOR_BLOB_VERSION: u16 = 1;
+
     fn open(db_path: PathBuf) -> io::Result<Self> {
-        let state = if db_path.exists() {
+        let mut state = if db_path.exists() {
             let raw = fs::read_to_string(&db_path)?;
             serde_json::from_str(&raw).unwrap_or_default()
         } else {
             State::default()
         };
+        let vector_blob_path = db_path.with_extension("vblob");
+        let vector_values = Self::load_vector_values(&state, &vector_blob_path)?;
+        for (key, values) in &vector_values {
+            if let Some(vector) = state.vectors.get_mut(key) {
+                vector.values = values.clone();
+            }
+        }
         Ok(Self {
             audit_log_path: db_path.with_extension("native-audit.log"),
+            vector_blob_path,
             db_path,
             state,
+            vector_values,
             cache_dirty: true,
             batch_mode: false,
             node_keys_by_corpus: HashMap::new(),
@@ -227,12 +249,7 @@ impl Server {
         file.flush()
     }
 
-    fn append_request_audit_event(
-        &self,
-        error_code: &str,
-        failure_class: &str,
-        request_id: &str,
-    ) {
+    fn append_request_audit_event(&self, error_code: &str, failure_class: &str, request_id: &str) {
         let _ = Self::append_request_audit_event_for_path(
             &self.audit_log_path,
             error_code,
@@ -243,8 +260,11 @@ impl Server {
 
     fn persist(&self) -> io::Result<()> {
         let start = std::time::Instant::now();
-        let raw = serde_json::to_vec(&self.state)
-            .map_err(|err| io::Error::other(format!("serialize failed: {err}")))?;
+        let mut persisted_state = self.state.clone();
+        let vector_blob_payload =
+            Self::build_vector_blob_payload(&mut persisted_state, &self.vector_values)?;
+        let raw = serde_json::to_vec(&persisted_state)
+            .map_err(|err| io::Error::other(format!("serialize state failed: {err}")))?;
         let serialize_ms = start.elapsed().as_millis();
         let parent = self
             .db_path
@@ -254,37 +274,39 @@ impl Server {
         fs::create_dir_all(&parent)
             .map_err(|err| io::Error::other(format!("create_dir_all({:?}): {err}", parent)))?;
 
+        Self::persist_vector_blob_atomic(&self.vector_blob_path, &vector_blob_payload)?;
+
         // Write to tmp file first, then rename for atomicity
         let tmp_path = self.db_path.with_extension("agdb.tmp");
-        let mut file = io::BufWriter::with_capacity(8 * 1024 * 1024, fs::File::create(&tmp_path)
-            .map_err(|err| io::Error::other(format!("File::create({:?}): {err}", tmp_path)))?);
-        file.write_all(&raw)
-            .map_err(|err| {
-                let _ = fs::remove_file(&tmp_path);
-                io::Error::other(format!("write_all({}bytes): {err}", raw.len()))
-            })?;
-        file.flush()
-            .map_err(|err| {
-                let _ = fs::remove_file(&tmp_path);
-                io::Error::other(format!("flush: {err}"))
-            })?;
-        let inner = file.into_inner()
-            .map_err(|err| {
-                let _ = fs::remove_file(&tmp_path);
-                io::Error::other(format!("into_inner: {err}"))
-            })?;
-        inner.sync_all()
-            .map_err(|err| {
-                let _ = fs::remove_file(&tmp_path);
-                io::Error::other(format!("sync_all: {err}"))
-            })?;
+        let mut file = io::BufWriter::with_capacity(
+            8 * 1024 * 1024,
+            fs::File::create(&tmp_path)
+                .map_err(|err| io::Error::other(format!("File::create({:?}): {err}", tmp_path)))?,
+        );
+        file.write_all(&raw).map_err(|err| {
+            let _ = fs::remove_file(&tmp_path);
+            io::Error::other(format!("write_all({}bytes): {err}", raw.len()))
+        })?;
+        file.flush().map_err(|err| {
+            let _ = fs::remove_file(&tmp_path);
+            io::Error::other(format!("flush: {err}"))
+        })?;
+        let inner = file.into_inner().map_err(|err| {
+            let _ = fs::remove_file(&tmp_path);
+            io::Error::other(format!("into_inner: {err}"))
+        })?;
+        inner.sync_all().map_err(|err| {
+            let _ = fs::remove_file(&tmp_path);
+            io::Error::other(format!("sync_all: {err}"))
+        })?;
         drop(inner);
 
         // Atomic rename (fallback to copy+remove if rename fails)
         if let Err(_rename_err) = fs::rename(&tmp_path, &self.db_path) {
             // Fallback: copy then remove tmp (non-atomic but works across filesystems)
-            fs::copy(&tmp_path, &self.db_path)
-                .map_err(|err| io::Error::other(format!("copy({:?} -> {:?}): {err}", tmp_path, self.db_path)))?;
+            fs::copy(&tmp_path, &self.db_path).map_err(|err| {
+                io::Error::other(format!("copy({:?} -> {:?}): {err}", tmp_path, self.db_path))
+            })?;
             let _ = fs::remove_file(&tmp_path);
         }
 
@@ -308,6 +330,135 @@ impl Server {
 
     fn key(corpus_id: &str, id: &str) -> String {
         format!("{corpus_id}:{id}")
+    }
+
+    fn load_vector_values(
+        state: &State,
+        blob_path: &PathBuf,
+    ) -> io::Result<HashMap<String, Vec<f64>>> {
+        let mut values = HashMap::new();
+        let mut raw_blob: Vec<u8> = Vec::new();
+        if blob_path.exists() {
+            raw_blob = fs::read(blob_path)?;
+            if raw_blob.len() < Self::VECTOR_BLOB_MAGIC.len() + std::mem::size_of::<u16>() {
+                return Err(io::Error::other("vector blob file is truncated"));
+            }
+            if &raw_blob[..Self::VECTOR_BLOB_MAGIC.len()] != Self::VECTOR_BLOB_MAGIC {
+                return Err(io::Error::other("vector blob magic mismatch"));
+            }
+            let version_start = Self::VECTOR_BLOB_MAGIC.len();
+            let version_end = version_start + std::mem::size_of::<u16>();
+            let version = u16::from_le_bytes(
+                raw_blob[version_start..version_end]
+                    .try_into()
+                    .expect("slice length"),
+            );
+            if version != Self::VECTOR_BLOB_VERSION {
+                return Err(io::Error::other(format!(
+                    "vector blob version mismatch: expected {}, got {}",
+                    Self::VECTOR_BLOB_VERSION,
+                    version
+                )));
+            }
+        }
+
+        let payload_offset = Self::VECTOR_BLOB_MAGIC.len() + std::mem::size_of::<u16>();
+        for (key, vector) in &state.vectors {
+            if !vector.values.is_empty() {
+                values.insert(key.clone(), vector.values.clone());
+                continue;
+            }
+            let Some(blob_ref) = &vector.blob_ref else {
+                continue;
+            };
+            if raw_blob.is_empty() {
+                return Err(io::Error::other(
+                    "vector metadata references blob but blob file is missing",
+                ));
+            }
+            let start = payload_offset.saturating_add(blob_ref.offset as usize);
+            let byte_len = (blob_ref.len as usize)
+                .checked_mul(std::mem::size_of::<f64>())
+                .ok_or_else(|| io::Error::other("vector blob length overflow"))?;
+            let end = start
+                .checked_add(byte_len)
+                .ok_or_else(|| io::Error::other("vector blob offset overflow"))?;
+            if end > raw_blob.len() {
+                return Err(io::Error::other("vector blob reference out of bounds"));
+            }
+            let mut out = Vec::with_capacity(blob_ref.len as usize);
+            for chunk in raw_blob[start..end].chunks_exact(std::mem::size_of::<f64>()) {
+                let num = f64::from_le_bytes(chunk.try_into().expect("slice length"));
+                out.push(num);
+            }
+            values.insert(key.clone(), out);
+        }
+        Ok(values)
+    }
+
+    fn build_vector_blob_payload(
+        state: &mut State,
+        vector_values: &HashMap<String, Vec<f64>>,
+    ) -> io::Result<Vec<u8>> {
+        let mut payload = Vec::new();
+        payload.extend_from_slice(Self::VECTOR_BLOB_MAGIC);
+        payload.extend_from_slice(&Self::VECTOR_BLOB_VERSION.to_le_bytes());
+        let mut offset = 0u64;
+        let mut keys: Vec<String> = state.vectors.keys().cloned().collect();
+        keys.sort();
+        for key in keys {
+            let Some(vector) = state.vectors.get_mut(&key) else {
+                continue;
+            };
+            let values = vector_values
+                .get(&key)
+                .cloned()
+                .unwrap_or_else(|| vector.values.clone());
+            let len = u32::try_from(values.len())
+                .map_err(|_| io::Error::other("vector dimensions exceed u32"))?;
+            for value in &values {
+                payload.extend_from_slice(&value.to_le_bytes());
+            }
+            vector.values.clear();
+            vector.blob_ref = Some(VectorBlobRef { offset, len });
+            offset = offset
+                .checked_add((len as u64) * std::mem::size_of::<f64>() as u64)
+                .ok_or_else(|| io::Error::other("vector blob offset overflow"))?;
+        }
+        Ok(payload)
+    }
+
+    fn persist_vector_blob_atomic(path: &PathBuf, payload: &[u8]) -> io::Result<()> {
+        let tmp_path = path.with_extension("vblob.tmp");
+        let mut file = io::BufWriter::with_capacity(
+            8 * 1024 * 1024,
+            fs::File::create(&tmp_path)
+                .map_err(|err| io::Error::other(format!("File::create({:?}): {err}", tmp_path)))?,
+        );
+        file.write_all(payload).map_err(|err| {
+            let _ = fs::remove_file(&tmp_path);
+            io::Error::other(format!("write_all(vblob): {err}"))
+        })?;
+        file.flush().map_err(|err| {
+            let _ = fs::remove_file(&tmp_path);
+            io::Error::other(format!("flush(vblob): {err}"))
+        })?;
+        let inner = file.into_inner().map_err(|err| {
+            let _ = fs::remove_file(&tmp_path);
+            io::Error::other(format!("into_inner(vblob): {err}"))
+        })?;
+        inner.sync_all().map_err(|err| {
+            let _ = fs::remove_file(&tmp_path);
+            io::Error::other(format!("sync_all(vblob): {err}"))
+        })?;
+        drop(inner);
+        if let Err(_rename_err) = fs::rename(&tmp_path, path) {
+            fs::copy(&tmp_path, path).map_err(|err| {
+                io::Error::other(format!("copy({:?} -> {:?}): {err}", tmp_path, path))
+            })?;
+            let _ = fs::remove_file(&tmp_path);
+        }
+        Ok(())
     }
 
     fn node_key(corpus_id: &str, node_id: &str) -> String {
@@ -459,13 +610,22 @@ impl Server {
                 }
             }
             let mut props: Properties = Properties::new();
-            props.insert("nodeId".to_string(), GraphValue::String(node.node_id.clone()));
-            props.insert("corpusId".to_string(), GraphValue::String(node.corpus_id.clone()));
+            props.insert(
+                "nodeId".to_string(),
+                GraphValue::String(node.node_id.clone()),
+            );
+            props.insert(
+                "corpusId".to_string(),
+                GraphValue::String(node.corpus_id.clone()),
+            );
             props.insert("layer".to_string(), GraphValue::String(node.layer.clone()));
             if let Some(ref_str) = node.r#ref.as_str() {
                 props.insert("ref".to_string(), GraphValue::String(ref_str.to_string()));
             } else {
-                props.insert("ref".to_string(), GraphValue::String(node.r#ref.to_string()));
+                props.insert(
+                    "ref".to_string(),
+                    GraphValue::String(node.r#ref.to_string()),
+                );
             }
             let created = store.create_node(vec![node.label.clone()], props);
             id_map.insert(key.clone(), created.id.clone());
@@ -485,7 +645,10 @@ impl Server {
                 if let Some(ref bk) = edge.bridge_kind {
                     props.insert("bridgeKind".to_string(), GraphValue::String(bk.clone()));
                 }
-                props.insert("edgeId".to_string(), GraphValue::String(edge.edge_id.clone()));
+                props.insert(
+                    "edgeId".to_string(),
+                    GraphValue::String(edge.edge_id.clone()),
+                );
                 store.create_edge(from_id, to_id, edge.relation.clone(), props);
             }
         }
@@ -494,8 +657,7 @@ impl Server {
     }
 
     fn handle(&mut self, req: RpcRequest) -> RpcResponse {
-        let result: Result<Value, AppError> = (|| {
-            match req.method.as_str() {
+        let result: Result<Value, AppError> = (|| match req.method.as_str() {
             "ping" => Ok(json!({"pong": true})),
             "batch_begin" => {
                 self.batch_mode = true;
@@ -503,15 +665,22 @@ impl Server {
             }
             "batch_commit" => {
                 self.batch_mode = false;
-                self.persist()
-                    .map_err(|err| Self::execution_io_error(format!("batch_commit persist failed: {err}")))?;
+                self.persist().map_err(|err| {
+                    Self::execution_io_error(format!("batch_commit persist failed: {err}"))
+                })?;
                 Ok(json!(null))
             }
             "upsert_nodes" => {
-                let nodes = req.params.get("nodes").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+                let nodes = req
+                    .params
+                    .get("nodes")
+                    .and_then(|v| v.as_array())
+                    .cloned()
+                    .unwrap_or_default();
                 for node in nodes {
-                    let parsed = serde_json::from_value::<GraphNode>(node)
-                        .map_err(|err| Self::execution_client_error(format!("invalid node: {err}")))?;
+                    let parsed = serde_json::from_value::<GraphNode>(node).map_err(|err| {
+                        Self::execution_client_error(format!("invalid node: {err}"))
+                    })?;
                     self.state
                         .nodes
                         .insert(Self::key(&parsed.corpus_id, &parsed.node_id), parsed);
@@ -522,10 +691,16 @@ impl Server {
                 Ok(json!(null))
             }
             "upsert_edges" => {
-                let edges = req.params.get("edges").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+                let edges = req
+                    .params
+                    .get("edges")
+                    .and_then(|v| v.as_array())
+                    .cloned()
+                    .unwrap_or_default();
                 for edge in edges {
-                    let parsed = serde_json::from_value::<GraphEdge>(edge)
-                        .map_err(|err| Self::execution_client_error(format!("invalid edge: {err}")))?;
+                    let parsed = serde_json::from_value::<GraphEdge>(edge).map_err(|err| {
+                        Self::execution_client_error(format!("invalid edge: {err}"))
+                    })?;
                     self.state
                         .edges
                         .insert(Self::key(&parsed.corpus_id, &parsed.edge_id), parsed);
@@ -536,13 +711,29 @@ impl Server {
                 Ok(json!(null))
             }
             "get_node" => {
-                let corpus_id = req.params.get("corpusId").and_then(Value::as_str).unwrap_or_default();
-                let node_id = req.params.get("nodeId").and_then(Value::as_str).unwrap_or_default();
-                let node = self.state.nodes.get(&Self::key(corpus_id, node_id)).cloned();
+                let corpus_id = req
+                    .params
+                    .get("corpusId")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                let node_id = req
+                    .params
+                    .get("nodeId")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                let node = self
+                    .state
+                    .nodes
+                    .get(&Self::key(corpus_id, node_id))
+                    .cloned();
                 Ok(serde_json::to_value(node).unwrap_or(Value::Null))
             }
             "get_nodes" => {
-                let corpus_id = req.params.get("corpusId").and_then(Value::as_str).unwrap_or_default();
+                let corpus_id = req
+                    .params
+                    .get("corpusId")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
                 let layer = req.params.get("layer").and_then(Value::as_str);
                 self.ensure_cache();
                 let mut out: Vec<GraphNode> = self
@@ -558,7 +749,11 @@ impl Server {
                 Ok(serde_json::to_value(out).unwrap_or(Value::Null))
             }
             "get_edges" => {
-                let corpus_id = req.params.get("corpusId").and_then(Value::as_str).unwrap_or_default();
+                let corpus_id = req
+                    .params
+                    .get("corpusId")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
                 let source_node_id = req.params.get("sourceNodeId").and_then(Value::as_str);
                 self.ensure_cache();
                 let mut out: Vec<GraphEdge> = self
@@ -574,8 +769,16 @@ impl Server {
                 Ok(serde_json::to_value(out).unwrap_or(Value::Null))
             }
             "get_adjacent" => {
-                let corpus_id = req.params.get("corpusId").and_then(Value::as_str).unwrap_or_default();
-                let node_id = req.params.get("nodeId").and_then(Value::as_str).unwrap_or_default();
+                let corpus_id = req
+                    .params
+                    .get("corpusId")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                let node_id = req
+                    .params
+                    .get("nodeId")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
                 self.ensure_cache();
                 let node_key = Self::node_key(corpus_id, node_id);
                 let mut out: Vec<GraphEdge> = self
@@ -590,11 +793,25 @@ impl Server {
                 Ok(serde_json::to_value(out).unwrap_or(Value::Null))
             }
             "delete_nodes" => {
-                let corpus_id = req.params.get("corpusId").and_then(Value::as_str).unwrap_or_default();
-                let node_ids = req.params.get("nodeIds").and_then(Value::as_array).cloned().unwrap_or_default();
+                let corpus_id = req
+                    .params
+                    .get("corpusId")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                let node_ids = req
+                    .params
+                    .get("nodeIds")
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default();
                 let mut deleted = 0;
                 for node_id in node_ids.iter().filter_map(Value::as_str) {
-                    if self.state.nodes.remove(&Self::key(corpus_id, node_id)).is_some() {
+                    if self
+                        .state
+                        .nodes
+                        .remove(&Self::key(corpus_id, node_id))
+                        .is_some()
+                    {
                         deleted += 1;
                     }
                     self.state.edges.retain(|_, edge| {
@@ -608,11 +825,25 @@ impl Server {
                 Ok(json!(deleted))
             }
             "delete_edges" => {
-                let corpus_id = req.params.get("corpusId").and_then(Value::as_str).unwrap_or_default();
-                let edge_ids = req.params.get("edgeIds").and_then(Value::as_array).cloned().unwrap_or_default();
+                let corpus_id = req
+                    .params
+                    .get("corpusId")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                let edge_ids = req
+                    .params
+                    .get("edgeIds")
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default();
                 let mut deleted = 0;
                 for edge_id in edge_ids.iter().filter_map(Value::as_str) {
-                    if self.state.edges.remove(&Self::key(corpus_id, edge_id)).is_some() {
+                    if self
+                        .state
+                        .edges
+                        .remove(&Self::key(corpus_id, edge_id))
+                        .is_some()
+                    {
                         deleted += 1;
                     }
                 }
@@ -622,8 +853,16 @@ impl Server {
                 Ok(json!(deleted))
             }
             "delete_by_document" => {
-                let corpus_id = req.params.get("corpusId").and_then(Value::as_str).unwrap_or_default();
-                let document_id = req.params.get("documentId").and_then(Value::as_str).unwrap_or_default();
+                let corpus_id = req
+                    .params
+                    .get("corpusId")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                let document_id = req
+                    .params
+                    .get("documentId")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
                 let before_nodes = self.state.nodes.len();
                 let before_edges = self.state.edges.len();
                 let removable: Vec<String> = self
@@ -649,14 +888,28 @@ impl Server {
                         && (removed_node_ids.iter().any(|id| id == &edge.source_node_id)
                             || removed_node_ids.iter().any(|id| id == &edge.target_node_id)))
                 });
-                self.state.vectors.retain(|_, v| {
+                let mut removed_vector_keys = Vec::new();
+                self.state.vectors.retain(|key, v| {
                     if v.corpus_id != corpus_id {
                         return true;
                     }
-                    let doc = v.metadata.get("documentId").and_then(Value::as_str).unwrap_or_default();
-                    doc != document_id
+                    let doc = v
+                        .metadata
+                        .get("documentId")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default();
+                    let keep = doc != document_id;
+                    if !keep {
+                        removed_vector_keys.push(key.clone());
+                    }
+                    keep
                 });
-                self.state.passages.retain(|_, p| !(p.corpus_id == corpus_id && p.document_id == document_id));
+                for key in removed_vector_keys {
+                    self.vector_values.remove(&key);
+                }
+                self.state
+                    .passages
+                    .retain(|_, p| !(p.corpus_id == corpus_id && p.document_id == document_id));
                 self.mark_cache_dirty();
                 self.persist_if_needed()
                     .map_err(|err| Self::execution_io_error(format!("persist failed: {err}")))?;
@@ -666,12 +919,26 @@ impl Server {
                 }))
             }
             "delete_by_corpus" => {
-                let corpus_id = req.params.get("corpusId").and_then(Value::as_str).unwrap_or_default();
+                let corpus_id = req
+                    .params
+                    .get("corpusId")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
                 let before_nodes = self.state.nodes.len();
                 let before_edges = self.state.edges.len();
                 self.state.nodes.retain(|_, n| n.corpus_id != corpus_id);
                 self.state.edges.retain(|_, e| e.corpus_id != corpus_id);
-                self.state.vectors.retain(|_, v| v.corpus_id != corpus_id);
+                let mut removed_vector_keys = Vec::new();
+                self.state.vectors.retain(|key, v| {
+                    let keep = v.corpus_id != corpus_id;
+                    if !keep {
+                        removed_vector_keys.push(key.clone());
+                    }
+                    keep
+                });
+                for key in removed_vector_keys {
+                    self.vector_values.remove(&key);
+                }
                 self.state.passages.retain(|_, p| p.corpus_id != corpus_id);
                 self.state.snapshots.remove(corpus_id);
                 self.mark_cache_dirty();
@@ -683,13 +950,23 @@ impl Server {
                 }))
             }
             "vector_upsert" => {
-                let records = req.params.get("records").and_then(Value::as_array).cloned().unwrap_or_default();
+                let records = req
+                    .params
+                    .get("records")
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default();
                 for record in records {
-                    let parsed = serde_json::from_value::<VectorRecord>(record)
-                        .map_err(|err| Self::execution_client_error(format!("invalid vector record: {err}")))?;
-                    self.state
-                        .vectors
-                        .insert(Self::key(&parsed.corpus_id, &parsed.id), parsed);
+                    let parsed = serde_json::from_value::<VectorRecord>(record).map_err(|err| {
+                        Self::execution_client_error(format!("invalid vector record: {err}"))
+                    })?;
+                    let key = Self::key(&parsed.corpus_id, &parsed.id);
+                    self.vector_values
+                        .insert(key.clone(), parsed.values.clone());
+                    let mut persisted = parsed.clone();
+                    persisted.values.clear();
+                    persisted.blob_ref = None;
+                    self.state.vectors.insert(key, persisted);
                 }
                 self.mark_cache_dirty();
                 self.persist_if_needed()
@@ -697,8 +974,16 @@ impl Server {
                 Ok(json!(null))
             }
             "vector_search" => {
-                let corpus_id = req.params.get("corpusId").and_then(Value::as_str).unwrap_or_default();
-                let namespace = req.params.get("namespace").and_then(Value::as_str).unwrap_or_default();
+                let corpus_id = req
+                    .params
+                    .get("corpusId")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                let namespace = req
+                    .params
+                    .get("namespace")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
                 let top_k = req.params.get("topK").and_then(Value::as_u64).unwrap_or(10) as usize;
                 let threshold = req.params.get("threshold").and_then(Value::as_f64);
                 let query_vec = req
@@ -719,7 +1004,11 @@ impl Server {
                     .flat_map(|keys| keys.iter())
                     .filter_map(|key| self.state.vectors.get(key))
                     .map(|v| {
-                        let score = Self::cosine(&query_vec, &v.values);
+                        let key = Self::key(&v.corpus_id, &v.id);
+                        let values = self.vector_values.get(&key);
+                        let score = values
+                            .map(|vector| Self::cosine(&query_vec, vector))
+                            .unwrap_or(0.0);
                         (v, score)
                     })
                     .filter(|(_, score)| threshold.is_none_or(|th| *score >= th))
@@ -740,26 +1029,52 @@ impl Server {
                 Ok(json!(out))
             }
             "vector_delete_by_document" => {
-                let corpus_id = req.params.get("corpusId").and_then(Value::as_str).unwrap_or_default();
-                let document_id = req.params.get("documentId").and_then(Value::as_str).unwrap_or_default();
-                self.state.vectors.retain(|_, v| {
+                let corpus_id = req
+                    .params
+                    .get("corpusId")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                let document_id = req
+                    .params
+                    .get("documentId")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                let mut removed_vector_keys = Vec::new();
+                self.state.vectors.retain(|key, v| {
                     if v.corpus_id != corpus_id {
                         return true;
                     }
-                    let doc = v.metadata.get("documentId").and_then(Value::as_str).unwrap_or_default();
-                    doc != document_id
+                    let doc = v
+                        .metadata
+                        .get("documentId")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default();
+                    let keep = doc != document_id;
+                    if !keep {
+                        removed_vector_keys.push(key.clone());
+                    }
+                    keep
                 });
+                for key in removed_vector_keys {
+                    self.vector_values.remove(&key);
+                }
                 self.mark_cache_dirty();
                 self.persist_if_needed()
                     .map_err(|err| Self::execution_io_error(format!("persist failed: {err}")))?;
                 Ok(json!(null))
             }
             "memory_save" => {
-                let snapshot = req.params.get("snapshot").cloned().unwrap_or_else(|| json!({}));
+                let snapshot = req
+                    .params
+                    .get("snapshot")
+                    .cloned()
+                    .unwrap_or_else(|| json!({}));
                 let corpus_id = snapshot
                     .get("corpusId")
                     .and_then(Value::as_str)
-                    .ok_or_else(|| Self::execution_client_error("missing snapshot.corpusId".to_string()))?
+                    .ok_or_else(|| {
+                        Self::execution_client_error("missing snapshot.corpusId".to_string())
+                    })?
                     .to_string();
                 self.state.snapshots.insert(corpus_id, snapshot);
                 self.persist_if_needed()
@@ -767,46 +1082,77 @@ impl Server {
                 Ok(json!(null))
             }
             "memory_save_file" => {
-                let file_path = req.params.get("filePath")
+                let file_path = req
+                    .params
+                    .get("filePath")
                     .and_then(Value::as_str)
                     .ok_or_else(|| Self::execution_client_error("missing filePath".to_string()))?;
-                let file_content = std::fs::read_to_string(file_path)
-                    .map_err(|err| Self::execution_io_error(format!("read file {file_path}: {err}")))?;
-                let snapshot: Value = serde_json::from_str(&file_content)
-                    .map_err(|err| Self::execution_client_error(format!("parse JSON {file_path}: {err}")))?;
+                let file_content = std::fs::read_to_string(file_path).map_err(|err| {
+                    Self::execution_io_error(format!("read file {file_path}: {err}"))
+                })?;
+                let snapshot: Value = serde_json::from_str(&file_content).map_err(|err| {
+                    Self::execution_client_error(format!("parse JSON {file_path}: {err}"))
+                })?;
                 let corpus_id = snapshot
                     .get("corpusId")
                     .and_then(Value::as_str)
-                    .ok_or_else(|| Self::execution_client_error("missing snapshot.corpusId".to_string()))?
+                    .ok_or_else(|| {
+                        Self::execution_client_error("missing snapshot.corpusId".to_string())
+                    })?
                     .to_string();
-                let facts_count = snapshot.get("facts").and_then(Value::as_array).map(|a| a.len()).unwrap_or(0);
-                let passages_count = snapshot.get("passages").and_then(Value::as_array).map(|a| a.len()).unwrap_or(0);
-                eprintln!("[memory_save_file] Loading {file_path}: {facts_count} facts, {passages_count} passages");
+                let facts_count = snapshot
+                    .get("facts")
+                    .and_then(Value::as_array)
+                    .map(|a| a.len())
+                    .unwrap_or(0);
+                let passages_count = snapshot
+                    .get("passages")
+                    .and_then(Value::as_array)
+                    .map(|a| a.len())
+                    .unwrap_or(0);
+                eprintln!(
+                    "[memory_save_file] Loading {file_path}: {facts_count} facts, {passages_count} passages"
+                );
                 self.state.snapshots.insert(corpus_id, snapshot);
                 self.persist_if_needed()
                     .map_err(|err| Self::execution_io_error(format!("persist failed: {err}")))?;
                 Ok(json!({ "facts": facts_count, "passages": passages_count }))
             }
             "memory_load" => {
-                let corpus_id = req.params.get("corpusId").and_then(Value::as_str).unwrap_or_default();
-                let snapshot = self.state.snapshots.get(corpus_id).cloned().unwrap_or_else(|| {
-                    json!({
-                        "corpusId": corpus_id,
-                        "exportedAt": "",
-                        "schemas": [],
-                        "facts": [],
-                        "passages": [],
-                        "schemaVersion": 1
-                    })
-                });
+                let corpus_id = req
+                    .params
+                    .get("corpusId")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                let snapshot = self
+                    .state
+                    .snapshots
+                    .get(corpus_id)
+                    .cloned()
+                    .unwrap_or_else(|| {
+                        json!({
+                            "corpusId": corpus_id,
+                            "exportedAt": "",
+                            "schemas": [],
+                            "facts": [],
+                            "passages": [],
+                            "schemaVersion": 1
+                        })
+                    });
                 Ok(snapshot)
             }
             "memory_save_checkpoint" => {
-                let checkpoint = req.params.get("checkpoint").cloned().unwrap_or_else(|| json!({}));
+                let checkpoint = req
+                    .params
+                    .get("checkpoint")
+                    .cloned()
+                    .unwrap_or_else(|| json!({}));
                 let job_id = checkpoint
                     .get("jobId")
                     .and_then(Value::as_str)
-                    .ok_or_else(|| Self::execution_client_error("missing checkpoint.jobId".to_string()))?
+                    .ok_or_else(|| {
+                        Self::execution_client_error("missing checkpoint.jobId".to_string())
+                    })?
                     .to_string();
                 self.state.checkpoints.insert(job_id, checkpoint);
                 self.persist_if_needed()
@@ -814,13 +1160,26 @@ impl Server {
                 Ok(json!(null))
             }
             "memory_load_checkpoint" => {
-                let job_id = req.params.get("jobId").and_then(Value::as_str).unwrap_or_default();
-                let checkpoint = self.state.checkpoints.get(job_id).cloned().unwrap_or(Value::Null);
+                let job_id = req
+                    .params
+                    .get("jobId")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                let checkpoint = self
+                    .state
+                    .checkpoints
+                    .get(job_id)
+                    .cloned()
+                    .unwrap_or(Value::Null);
                 Ok(checkpoint)
             }
             "memory_validate_integrity" => Ok(json!([])),
             "projection_get_transitions" => {
-                let corpus_id = req.params.get("corpusId").and_then(Value::as_str).unwrap_or_default();
+                let corpus_id = req
+                    .params
+                    .get("corpusId")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
                 self.ensure_cache();
                 let mut out: Vec<Value> = self
                     .edge_keys_by_corpus
@@ -837,14 +1196,24 @@ impl Server {
                     })
                     .collect();
                 out.sort_by(|a, b| {
-                    let ak = a.get("sourceNodeId").and_then(Value::as_str).unwrap_or_default();
-                    let bk = b.get("sourceNodeId").and_then(Value::as_str).unwrap_or_default();
+                    let ak = a
+                        .get("sourceNodeId")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default();
+                    let bk = b
+                        .get("sourceNodeId")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default();
                     ak.cmp(bk)
                 });
                 Ok(json!(out))
             }
             "projection_get_dangling_nodes" => {
-                let corpus_id = req.params.get("corpusId").and_then(Value::as_str).unwrap_or_default();
+                let corpus_id = req
+                    .params
+                    .get("corpusId")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
                 self.ensure_cache();
                 let mut outgoing: HashMap<String, usize> = HashMap::new();
                 for edge in self
@@ -869,7 +1238,11 @@ impl Server {
                 Ok(json!(dangling))
             }
             "projection_get_node_count" => {
-                let corpus_id = req.params.get("corpusId").and_then(Value::as_str).unwrap_or_default();
+                let corpus_id = req
+                    .params
+                    .get("corpusId")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
                 self.ensure_cache();
                 let count = self
                     .node_keys_by_corpus
@@ -879,19 +1252,35 @@ impl Server {
                 Ok(json!(count))
             }
             "lexical_index_passages" => {
-                let corpus_id = req.params.get("corpusId").and_then(Value::as_str).unwrap_or_default();
-                let passages = req.params.get("passages").and_then(Value::as_array).cloned().unwrap_or_default();
+                let corpus_id = req
+                    .params
+                    .get("corpusId")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                let passages = req
+                    .params
+                    .get("passages")
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default();
                 for passage in passages {
                     let passage_id = passage
                         .get("passageId")
                         .and_then(Value::as_str)
-                        .ok_or_else(|| Self::execution_client_error("missing passageId".to_string()))?;
+                        .ok_or_else(|| {
+                            Self::execution_client_error("missing passageId".to_string())
+                        })?;
                     let document_id = passage
                         .get("metadata")
                         .and_then(|m| m.get("documentId"))
                         .and_then(Value::as_str)
-                        .ok_or_else(|| Self::execution_client_error("missing metadata.documentId".to_string()))?;
-                    let text = passage.get("text").and_then(Value::as_str).unwrap_or_default();
+                        .ok_or_else(|| {
+                            Self::execution_client_error("missing metadata.documentId".to_string())
+                        })?;
+                    let text = passage
+                        .get("text")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default();
                     let item = Passage {
                         passage_id: passage_id.to_string(),
                         corpus_id: corpus_id.to_string(),
@@ -908,8 +1297,16 @@ impl Server {
                 Ok(json!(null))
             }
             "lexical_search" => {
-                let corpus_id = req.params.get("corpusId").and_then(Value::as_str).unwrap_or_default();
-                let query = req.params.get("query").and_then(Value::as_str).unwrap_or_default();
+                let corpus_id = req
+                    .params
+                    .get("corpusId")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                let query = req
+                    .params
+                    .get("query")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
                 let top_k = req.params.get("topK").and_then(Value::as_u64).unwrap_or(10) as usize;
                 let tokens: Vec<String> = query
                     .to_lowercase()
@@ -936,8 +1333,14 @@ impl Server {
                     let sb = b.get("score").and_then(Value::as_f64).unwrap_or(0.0);
                     match sb.partial_cmp(&sa).unwrap_or(std::cmp::Ordering::Equal) {
                         std::cmp::Ordering::Equal => {
-                            let aid = a.get("passageId").and_then(Value::as_str).unwrap_or_default();
-                            let bid = b.get("passageId").and_then(Value::as_str).unwrap_or_default();
+                            let aid = a
+                                .get("passageId")
+                                .and_then(Value::as_str)
+                                .unwrap_or_default();
+                            let bid = b
+                                .get("passageId")
+                                .and_then(Value::as_str)
+                                .unwrap_or_default();
                             aid.cmp(bid)
                         }
                         other => other,
@@ -947,26 +1350,45 @@ impl Server {
                 Ok(json!(out))
             }
             "lexical_delete_by_document" => {
-                let corpus_id = req.params.get("corpusId").and_then(Value::as_str).unwrap_or_default();
-                let document_id = req.params.get("documentId").and_then(Value::as_str).unwrap_or_default();
-                self.state.passages.retain(|_, p| !(p.corpus_id == corpus_id && p.document_id == document_id));
+                let corpus_id = req
+                    .params
+                    .get("corpusId")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                let document_id = req
+                    .params
+                    .get("documentId")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                self.state
+                    .passages
+                    .retain(|_, p| !(p.corpus_id == corpus_id && p.document_id == document_id));
                 self.mark_cache_dirty();
                 self.persist_if_needed()
                     .map_err(|err| Self::execution_io_error(format!("persist failed: {err}")))?;
                 Ok(json!(null))
             }
             "cypher_query" => {
-                let query_str = req.params.get("query").and_then(Value::as_str)
+                let query_str = req
+                    .params
+                    .get("query")
+                    .and_then(Value::as_str)
                     .ok_or_else(|| Self::execution_client_error("missing query".to_string()))?;
                 let corpus_id = req.params.get("corpusId").and_then(Value::as_str);
-                let dialect_str = req.params.get("dialect").and_then(Value::as_str).unwrap_or("openCypher9");
+                let dialect_str = req
+                    .params
+                    .get("dialect")
+                    .and_then(Value::as_str)
+                    .unwrap_or("openCypher9");
                 let dialect = match dialect_str {
                     "neo4jCompat" | "Neo4jCompat" => CypherDialect::Neo4jCompat,
                     _ => CypherDialect::OpenCypher9,
                 };
                 let mut store = self.build_cypher_store(corpus_id);
-                let result = execute_query_with_dialect(&mut store, query_str, dialect)
-                    .map_err(|err| Self::execution_client_error(format!("cypher error: {err:?}")))?;
+                let result =
+                    execute_query_with_dialect(&mut store, query_str, dialect).map_err(|err| {
+                        Self::execution_client_error(format!("cypher error: {err:?}"))
+                    })?;
                 Ok(serde_json::to_value(result).unwrap_or(Value::Null))
             }
             "__debug_force_panic__" => {
@@ -975,8 +1397,7 @@ impl Server {
                 }
                 Err(Self::unsupported_method_error(&req.method))
             }
-                _ => Err(Self::unsupported_method_error(&req.method)),
-            }
+            _ => Err(Self::unsupported_method_error(&req.method)),
         })();
 
         match result {
@@ -994,14 +1415,14 @@ impl Server {
                     .unwrap_or_else(|| "INTERNAL_BUG".to_string());
                 self.append_request_audit_event(&code, &failure_class, &req.id.to_string());
                 RpcResponse {
-                id: req.id,
-                ok: false,
-                result: None,
-                error: Some(RpcError {
-                    code: err.code,
-                    message: err.message,
-                    failure_class: err.failure_class,
-                }),
+                    id: req.id,
+                    ok: false,
+                    result: None,
+                    error: Some(RpcError {
+                        code: err.code,
+                        message: err.message,
+                        failure_class: err.failure_class,
+                    }),
                 }
             }
         }
@@ -1034,7 +1455,11 @@ fn main() -> io::Result<()> {
         let line = match line_result {
             Ok(line) => line,
             Err(err) => {
-                crash_tracker.append_crash_event(Some(1), None, Some(format!("stdin read failed: {err}")));
+                crash_tracker.append_crash_event(
+                    Some(1),
+                    None,
+                    Some(format!("stdin read failed: {err}")),
+                );
                 return Err(err);
             }
         };
@@ -1069,7 +1494,9 @@ fn main() -> io::Result<()> {
                     crash_tracker.append_crash_event(
                         Some(1),
                         None,
-                        Some(format!("stdout write failed after invalid request: {write_err}")),
+                        Some(format!(
+                            "stdout write failed after invalid request: {write_err}"
+                        )),
                     );
                     return Err(write_err);
                 }
@@ -1094,4 +1521,133 @@ fn main() -> io::Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_path(prefix: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time ok")
+            .as_nanos();
+        std::env::temp_dir().join(format!("{prefix}-{nanos}.json"))
+    }
+
+    fn cleanup(path: &PathBuf) {
+        let _ = fs::remove_file(path);
+        let _ = fs::remove_file(path.with_extension("vblob"));
+        let _ = fs::remove_file(path.with_extension("native-audit.log"));
+    }
+
+    #[test]
+    fn persists_vector_values_in_blob_file() {
+        let path = temp_path("agdb-native-vblob");
+        let mut server = Server::open(path.clone()).expect("open server");
+        let req = RpcRequest {
+            id: 1,
+            method: "vector_upsert".to_string(),
+            params: json!({
+                "records": [
+                    {
+                        "id": "vec-1",
+                        "corpusId": "c1",
+                        "namespace": "default",
+                        "values": [1.0, 0.0, 0.5],
+                        "metadata": {"documentId":"d1"}
+                    }
+                ]
+            }),
+        };
+        let resp = server.handle(req);
+        assert!(resp.ok);
+
+        let db_raw = fs::read_to_string(&path).expect("read db");
+        assert!(db_raw.contains("\"blobRef\""));
+        assert!(!db_raw.contains("[1.0,0.0,0.5]"));
+
+        let blob = fs::read(path.with_extension("vblob")).expect("read blob");
+        assert!(blob.starts_with(Server::VECTOR_BLOB_MAGIC));
+
+        let mut reopened = Server::open(path.clone()).expect("reopen");
+        let search = reopened.handle(RpcRequest {
+            id: 2,
+            method: "vector_search".to_string(),
+            params: json!({
+                "corpusId":"c1",
+                "namespace":"default",
+                "queryVector":[1.0,0.0,0.5],
+                "topK": 1
+            }),
+        });
+        assert!(search.ok);
+        let result = search.result.expect("result array");
+        let first_id = result
+            .as_array()
+            .and_then(|a| a.first())
+            .and_then(|v| v.get("id"))
+            .and_then(Value::as_str);
+        assert_eq!(first_id, Some("vec-1"));
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn migrates_legacy_inline_vector_values_to_blob_on_persist() {
+        let path = temp_path("agdb-native-vblob-legacy");
+        let legacy = json!({
+            "nodes": {},
+            "edges": {},
+            "vectors": {
+                "c1:vec-legacy": {
+                    "id": "vec-legacy",
+                    "corpusId": "c1",
+                    "namespace": "default",
+                    "values": [0.5, 0.5],
+                    "metadata": {"documentId":"d2"}
+                }
+            },
+            "passages": {},
+            "snapshots": {},
+            "checkpoints": {}
+        });
+        fs::write(&path, legacy.to_string()).expect("write legacy state");
+
+        let mut server = Server::open(path.clone()).expect("open legacy");
+        let search = server.handle(RpcRequest {
+            id: 1,
+            method: "vector_search".to_string(),
+            params: json!({
+                "corpusId":"c1",
+                "namespace":"default",
+                "queryVector":[0.5,0.5],
+                "topK": 1
+            }),
+        });
+        assert!(search.ok);
+        server.persist().expect("persist migrated");
+
+        let db_raw = fs::read_to_string(&path).expect("read migrated db");
+        assert!(db_raw.contains("\"blobRef\""));
+        assert!(!db_raw.contains("\"values\":[0.5,0.5]"));
+        let blob = fs::read(path.with_extension("vblob")).expect("read migrated blob");
+        assert!(blob.starts_with(Server::VECTOR_BLOB_MAGIC));
+
+        let mut reopened = Server::open(path.clone()).expect("reopen migrated");
+        let search_again = reopened.handle(RpcRequest {
+            id: 2,
+            method: "vector_search".to_string(),
+            params: json!({
+                "corpusId":"c1",
+                "namespace":"default",
+                "queryVector":[0.5,0.5],
+                "topK": 1
+            }),
+        });
+        assert!(search_again.ok);
+
+        cleanup(&path);
+    }
 }
