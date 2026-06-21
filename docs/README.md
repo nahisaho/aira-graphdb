@@ -11,6 +11,10 @@
   - Quick start, basic operations, query examples, embedding vectors
   - クイックスタート、基本操作、クエリ例、ベクトル埋め込み
 
+- **[Client SDK Installation](client-sdk-install.md)** / **[クライアント SDK インストール](client-sdk-install.ja.md)** ⭐ NEW
+  - Node.js SDK, Python SDK, Rust client setup and usage
+  - Node.js SDK、Python SDK、Rust クライアント セットアップと使用方法
+
 ### 🛠️ Operations & Maintenance
 
 - **[Error Handling Guide](error-handling.md)** / **[エラーハンドリングガイド](error-handling.ja.md)**
@@ -61,6 +65,9 @@
 **Get started**
 → Start with [Installation Guide](install.md) and [Usage Guide](usage-guide.md)
 
+**Integrate with my application**
+→ Follow [Client SDK Installation](client-sdk-install.md) for Node.js, Python, or Rust
+
 **Deploy to production**
 → Read [Deployment Guide](deployment-guide.md) for Docker/Kubernetes setup
 
@@ -82,6 +89,7 @@
 |----------|------|--------|----------|
 | Installation | 4 KB | Build, setup, requirements | New users, DevOps |
 | Usage | 6 KB | Examples, queries, vectors | Developers |
+| **Client SDK Installation** | **10 KB** | **Node.js, Python, Rust SDKs** | **Developers** ⭐ |
 | Error Handling | 7 KB | Codes, recovery, monitoring | Operators, Developers |
 | Performance Tuning | 7 KB | Profiling, optimization | Operators, Performance engineers |
 | Troubleshooting | 9 KB | Debugging, common issues | Operators, Support |
