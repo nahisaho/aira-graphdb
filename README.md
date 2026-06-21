@@ -97,7 +97,8 @@ PYTHONPATH=. python -m unittest discover -s tests -v
 - Contract loading for type mapping / Cypher P0 grammar / error codes
 - Centralized error registry and code mapping
 - In-memory graph domain model (node/edge CRUD)
-- Storage snapshot + WAL-based persistence/recovery
+- Compact binary snapshot + WAL-based persistence/recovery
+- Legacy JSON snapshots auto-migrate on load
 - Transaction manager (begin/commit/rollback)
 - File write lock guard (`WRITE_LOCK_CONFLICT`)
 - Minimal query execution for P0 subset surface
@@ -141,7 +142,7 @@ Supported CALL/APOC subset is manifest-driven (`spec/contracts/apoc-procedure-ma
 Start sidecar:
 
 ```bash
-cargo run --bin aira-graphdb-native -- --db /path/to/aira-graphdb-native.json
+cargo run --bin aira-graphdb-native -- --db /path/to/aira-graphdb-native.db
 ```
 
 Register graph data:

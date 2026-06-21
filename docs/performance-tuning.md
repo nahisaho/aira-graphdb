@@ -133,6 +133,7 @@ Benefits:
 **Storage format**:
 
 `aira-graphdb` now uses a compact binary snapshot/WAL format with legacy JSON compatibility. This reduces serialization overhead and disk usage compared with the previous pretty-printed JSON layout.
+Legacy JSON files are rewritten to the compact format on load.
 
 **Document lifecycle**:
 

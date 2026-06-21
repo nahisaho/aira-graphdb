@@ -94,7 +94,7 @@ impl StorageEngine {
                 format!("cannot read db file: {e}"),
             )
         })?;
-        let snapshot = decode_snapshot(&raw)?;
+        let (snapshot, migrated) = decode_snapshot(&raw)?;
         if snapshot.catalog_version != CURRENT_CATALOG_VERSION {
             return Err(GraphDbError::new(
                 ErrorCode::IncompatibleFormat,
@@ -103,6 +103,9 @@ impl StorageEngine {
                     CURRENT_CATALOG_VERSION, snapshot.catalog_version
                 ),
             ));
+        }
+        if migrated {
+            self.persist_snapshot_from_struct(&snapshot)?;
         }
         Ok(snapshot.graph)
     }
@@ -114,7 +117,10 @@ impl StorageEngine {
                 format!("cannot read db file: {e}"),
             )
         })?;
-        let snapshot = decode_snapshot(&raw)?;
+        let (snapshot, migrated) = decode_snapshot(&raw)?;
+        if migrated {
+            self.persist_snapshot_from_struct(&snapshot)?;
+        }
         Ok(snapshot.cluster_metadata)
     }
 
@@ -328,7 +334,7 @@ fn encode_snapshot(snapshot: &PersistedSnapshot) -> Result<Vec<u8>, GraphDbError
     Ok(serialized)
 }
 
-fn decode_snapshot(raw: &[u8]) -> Result<PersistedSnapshot, GraphDbError> {
+fn decode_snapshot(raw: &[u8]) -> Result<(PersistedSnapshot, bool), GraphDbError> {
     if raw.starts_with(SNAPSHOT_MAGIC) {
         if raw.len() < SNAPSHOT_MAGIC.len() + std::mem::size_of::<u16>() {
             return Err(GraphDbError::new(
@@ -352,20 +358,24 @@ fn decode_snapshot(raw: &[u8]) -> Result<PersistedSnapshot, GraphDbError> {
                 ),
             ));
         }
-        return bincode::deserialize(&raw[version_end..]).map_err(|e| {
+        return bincode::deserialize(&raw[version_end..])
+            .map(|snapshot| (snapshot, false))
+            .map_err(|e| {
+                GraphDbError::new(
+                    ErrorCode::IncompatibleFormat,
+                    format!("cannot parse db snapshot: {e}"),
+                )
+            });
+    }
+
+    serde_json::from_slice(raw)
+        .map(|snapshot| (snapshot, true))
+        .map_err(|e| {
             GraphDbError::new(
                 ErrorCode::IncompatibleFormat,
                 format!("cannot parse db snapshot: {e}"),
             )
-        });
-    }
-
-    serde_json::from_slice(raw).map_err(|e| {
-        GraphDbError::new(
-            ErrorCode::IncompatibleFormat,
-            format!("cannot parse db snapshot: {e}"),
-        )
-    })
+        })
 }
 
 fn decode_binary_wal(raw: &[u8]) -> Result<Option<PersistedSnapshot>, GraphDbError> {
@@ -497,6 +507,37 @@ mod tests {
         let engine = StorageEngine::new(&path);
         let loaded = engine.load_graph().expect("load legacy snapshot");
         assert_eq!(loaded.node_count(), 0);
+        let raw = fs::read(&path).expect("migrated snapshot bytes");
+        assert!(raw.starts_with(SNAPSHOT_MAGIC));
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn loads_legacy_json_metadata_and_migrates() {
+        let path = temp_file("agdb-storage-legacy-meta");
+        let legacy = serde_json::json!({
+            "catalog_version": CURRENT_CATALOG_VERSION,
+            "cluster_metadata": {
+                "catalog_schema_version": "v1",
+                "partitions": [{
+                    "id": "p1",
+                    "range": "0-99"
+                }],
+                "replicas": [{
+                    "partition_id": "p1",
+                    "replicas": ["r1"]
+                }]
+            },
+            "graph": InMemoryGraphStore::new()
+        });
+        fs::write(&path, serde_json::to_string_pretty(&legacy).expect("json")).expect("write");
+        let engine = StorageEngine::new(&path);
+        let metadata = engine
+            .load_cluster_metadata()
+            .expect("load legacy metadata");
+        assert_eq!(metadata.partitions.len(), 1);
+        let raw = fs::read(&path).expect("migrated snapshot bytes");
+        assert!(raw.starts_with(SNAPSHOT_MAGIC));
         let _ = fs::remove_file(&path);
     }
 

@@ -208,6 +208,7 @@ Compatibility workflow references:
 - Rust binary: `aira-graphdb-native` (`src/bin/aira-graphdb-native.rs`)
 - Transport: JSON-RPC over stdin/stdout
 - Persistent state: `--db <path>` compact binary snapshot/WAL file
+- Legacy JSON snapshots are auto-migrated to the compact binary format on load
 
 This replaces the previous SQLite compatibility fallback for the `aira-graphdb` backend path.
 

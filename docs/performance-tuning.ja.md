@@ -133,6 +133,7 @@ await db.upsert_nodes(nodes);
 **ストレージ形式**:
 
 `aira-graphdb` は compact binary の snapshot/WAL 形式を使用し、旧 JSON 形式も読み込み互換で受け付けます。これにより、以前の pretty-printed JSON よりもシリアライズコストとディスク使用量を削減できます。
+旧 JSON ファイルは読み込み時に compact 形式へ書き戻されます。
 
 **ドキュメントライフサイクル**:
 

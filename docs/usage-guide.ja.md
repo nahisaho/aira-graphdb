@@ -206,6 +206,7 @@ Phase 4 で実装済みの主な内容:
 - Rustバイナリ: `aira-graphdb-native`（`src/bin/aira-graphdb-native.rs`）
 - 通信: stdin/stdout 上の JSON-RPC
 - 永続化: `--db <path>` で指定した compact binary スナップショット/WAL
+- 旧 JSON スナップショットは読み込み時に compact binary へ自動移行されます
 
 この経路により、`aira-graphdb` backend での従来のSQLite互換フォールバックを置き換えています。
 

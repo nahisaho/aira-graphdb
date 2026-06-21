@@ -10,8 +10,10 @@
 - **[Usage Guide](usage-guide.md)** / **[利用ガイド](usage-guide.ja.md)**
   - Quick start, basic operations, query examples, embedding vectors
   - Neo4j-compatible Cypher dialect usage
+  - Compact binary snapshot/WAL storage and legacy JSON auto-migration
   - クイックスタート、基本操作、クエリ例、ベクトル埋め込み
   - Neo4j 互換 Cypher ダイアレクトの利用
+  - compact binary snapshot/WAL ストレージと旧 JSON の自動移行
 
 - **[Client SDK Installation](client-sdk-install.md)** / **[クライアント SDK インストール](client-sdk-install.ja.md)** ⭐ NEW
   - Node.js SDK, Python SDK, Rust client setup and usage
@@ -27,9 +29,10 @@
 
 - **[Performance Tuning Guide](performance-tuning.md)** / **[性能チューニングガイド](performance-tuning.ja.md)**
   - Profiling tools (flamegraph, valgrind, heaptrack)
-  - Query optimization, storage strategies, connection pooling
+  - Query optimization, storage strategies, compact binary persistence
   - Horizontal scaling, configuration tuning, benchmarking
   - プロファイリングツール、クエリ最適化、ストレージ戦略
+  - compact binary 永続化
   - 水平スケーリング、設定チューニング、ベンチマーク
 
 - **[Troubleshooting Guide](troubleshooting.md)** / **[トラブルシューティングガイド](troubleshooting.ja.md)**
@@ -91,7 +94,7 @@
 | Document | Size | Topics | Audience |
 |----------|------|--------|----------|
 | Installation | 4 KB | Build, setup, requirements | New users, DevOps |
-| Usage | 6 KB | Examples, queries, vectors, Neo4j compat | Developers |
+| Usage | 6 KB | Examples, queries, vectors, Neo4j compat, compact storage | Developers |
 | **Client SDK Installation** | **10 KB** | **Node.js, Python, Rust SDKs** | **Developers** ⭐ |
 | Error Handling | 7 KB | Codes, recovery, monitoring | Operators, Developers |
 | Performance Tuning | 7 KB | Profiling, optimization | Operators, Performance engineers |
