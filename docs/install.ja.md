@@ -102,7 +102,7 @@ CI は以下を artifact として保存します。
 JSON-RPC通信バイナリを起動:
 
 ```bash
-cargo run --bin aira-graphdb-native -- --db /path/to/aira-graphdb-native.json
+cargo run --bin aira-graphdb-native -- --db /path/to/aira-graphdb-native.db
 ```
 
 `aira-synapse` からネイティブ実行を強制する場合:

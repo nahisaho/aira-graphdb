@@ -19,12 +19,17 @@ assert!(response.accepted);
 
 ```rust
 use aira_graphdb::graph::InMemoryGraphStore;
-use aira_graphdb::query::execute_query;
+use aira_graphdb::query::{execute_query, execute_query_with_dialect, CypherDialect};
 
 let mut store = InMemoryGraphStore::new();
 execute_query(&mut store, "CREATE (n:Paper {title:'GraphDB'})")?;
 execute_query(&mut store, "MERGE (n:Paper {title:'GraphDB'}) ON MATCH SET n.status='existing'")?;
 let _ = execute_query(&mut store, "MATCH (n:Paper) WITH n RETURN n ORDER BY n.id SKIP 0 LIMIT 1")?;
+let _ = execute_query_with_dialect(
+    &mut store,
+    "MATCH (n) RETURN n UNION MATCH (m) RETURN m",
+    CypherDialect::Neo4jCompat,
+)?;
 # Ok::<(), aira_graphdb::errors::GraphDbError>(())
 ```
 
@@ -47,7 +52,7 @@ let _ = execute_query(&mut store, "MATCH (n:Paper) WITH n RETURN n ORDER BY n.id
 sidecar 起動:
 
 ```bash
-cargo run --bin aira-graphdb-native -- --db /path/to/aira-graphdb-native.json
+cargo run --bin aira-graphdb-native -- --db /path/to/aira-graphdb-native.db
 ```
 
 ノード/エッジ登録:
@@ -164,6 +169,7 @@ artifacts/native-audit-events.json
 | `CREATE`, `MERGE`, `SET`, `REMOVE`, `DELETE`, `DETACH` | 対応（プロファイル範囲） | `MERGE` の on-create/on-match 実装済み |
 | `UNWIND` + 集約 | 対応 | `count/sum/avg/min/max/collect` |
 | `CALL` + APOC サブセット（`apoc.meta.schema`, `apoc.coll.toSet`, `apoc.text.join`, `apoc.refactor.rename.label`） | 対応（manifest制御） | 許可集合は `spec/contracts/apoc-procedure-manifest.v1.0.0.yaml` で固定 |
+| Neo4j 互換 Cypher ダイアレクト | 対応（ガード付き） | `execute_query_with_dialect(..., CypherDialect::Neo4jCompat)` は `UNION` / `UNION ALL` / `CASE` に対応し、`FOREACH` / variable-length path / `shortestPath(...)` を含む非対応拡張を `UNSUPPORTED_FEATURE` で拒否 |
 | 関係走査パターン（`()-[]->()`, `()-[]-()`） | 対応 | 単一ホップ走査 + `OPTIONAL MATCH/WHERE/WITH/ORDER BY/SKIP/LIMIT` 契約ケース |
 
 ## 7. aira-synapse との Storage Port 互換
@@ -199,7 +205,7 @@ Phase 4 で実装済みの主な内容:
 
 - Rustバイナリ: `aira-graphdb-native`（`src/bin/aira-graphdb-native.rs`）
 - 通信: stdin/stdout 上の JSON-RPC
-- 永続化: `--db <path>` で指定した JSON スナップショット
+- 永続化: `--db <path>` で指定した compact binary スナップショット/WAL
 
 この経路により、`aira-graphdb` backend での従来のSQLite互換フォールバックを置き換えています。
 

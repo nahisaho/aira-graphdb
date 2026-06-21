@@ -237,8 +237,10 @@ impl Server {
     }
 
     fn persist(&self) -> io::Result<()> {
+        let start = std::time::Instant::now();
         let raw = serde_json::to_vec(&self.state)
             .map_err(|err| io::Error::other(format!("serialize failed: {err}")))?;
+        let serialize_ms = start.elapsed().as_millis();
         let parent = self
             .db_path
             .parent()
@@ -247,14 +249,47 @@ impl Server {
         fs::create_dir_all(&parent)
             .map_err(|err| io::Error::other(format!("create_dir_all({:?}): {err}", parent)))?;
 
-        // Direct write (truncate + write) instead of tmp + rename
-        // to avoid ENOENT on rename in some filesystems
-        let mut file = fs::File::create(&self.db_path)
-            .map_err(|err| io::Error::other(format!("File::create({:?}): {err}", self.db_path)))?;
+        // Write to tmp file first, then rename for atomicity
+        let tmp_path = self.db_path.with_extension("agdb.tmp");
+        let mut file = io::BufWriter::with_capacity(8 * 1024 * 1024, fs::File::create(&tmp_path)
+            .map_err(|err| io::Error::other(format!("File::create({:?}): {err}", tmp_path)))?);
         file.write_all(&raw)
-            .map_err(|err| io::Error::other(format!("write_all({}bytes): {err}", raw.len())))?;
-        file.sync_all()
-            .map_err(|err| io::Error::other(format!("sync_all: {err}")))?;
+            .map_err(|err| {
+                let _ = fs::remove_file(&tmp_path);
+                io::Error::other(format!("write_all({}bytes): {err}", raw.len()))
+            })?;
+        file.flush()
+            .map_err(|err| {
+                let _ = fs::remove_file(&tmp_path);
+                io::Error::other(format!("flush: {err}"))
+            })?;
+        let inner = file.into_inner()
+            .map_err(|err| {
+                let _ = fs::remove_file(&tmp_path);
+                io::Error::other(format!("into_inner: {err}"))
+            })?;
+        inner.sync_all()
+            .map_err(|err| {
+                let _ = fs::remove_file(&tmp_path);
+                io::Error::other(format!("sync_all: {err}"))
+            })?;
+        drop(inner);
+
+        // Atomic rename (fallback to copy+remove if rename fails)
+        if let Err(_rename_err) = fs::rename(&tmp_path, &self.db_path) {
+            // Fallback: copy then remove tmp (non-atomic but works across filesystems)
+            fs::copy(&tmp_path, &self.db_path)
+                .map_err(|err| io::Error::other(format!("copy({:?} -> {:?}): {err}", tmp_path, self.db_path)))?;
+            let _ = fs::remove_file(&tmp_path);
+        }
+
+        let total_ms = start.elapsed().as_millis();
+        eprintln!(
+            "[persist] {}MB serialized in {}ms, written in {}ms",
+            raw.len() / (1024 * 1024),
+            serialize_ms,
+            total_ms - serialize_ms
+        );
         Ok(())
     }
 

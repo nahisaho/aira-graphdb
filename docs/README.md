@@ -9,7 +9,9 @@
 
 - **[Usage Guide](usage-guide.md)** / **[利用ガイド](usage-guide.ja.md)**
   - Quick start, basic operations, query examples, embedding vectors
+  - Neo4j-compatible Cypher dialect usage
   - クイックスタート、基本操作、クエリ例、ベクトル埋め込み
+  - Neo4j 互換 Cypher ダイアレクトの利用
 
 - **[Client SDK Installation](client-sdk-install.md)** / **[クライアント SDK インストール](client-sdk-install.ja.md)** ⭐ NEW
   - Node.js SDK, Python SDK, Rust client setup and usage
@@ -40,9 +42,9 @@
 
 ### 🔧 Advanced
 
-- **[Extension Guide](extension-guide.md)** / **[拡張ガイド](extension-guide.ja.md)**
+- **[Extension and Customization Guide](extension-guide.md)** / **[拡張・カスタマイズガイド](extension-guide.ja.md)**
   - Adding custom APOC procedures, memory storage types
-  - New query language support, vector embedding backends
+  - New query language support, Neo4j-compatible query gating, vector embedding backends
   - Custom transaction isolation, audit event types
   - Extension testing and contribution guidelines
   - カスタム APOC プロシージャ、メモリストレージ型追加
@@ -52,9 +54,10 @@
 - **[Deployment Guide](deployment-guide.md)** / **[デプロイメント・運用ガイド](deployment-guide.ja.md)**
   - Docker multi-stage build, Dockerfile best practices
   - Kubernetes deployment, YAML templates, networking
+  - Native Rust transport runtime, backend selection
   - Environment variables, Prometheus metrics, alerting
   - Backup/recovery procedures, scaling strategies
-  - ブックアップと復旧、メンテナンスタスク、アップグレード手順
+  - バックアップと復旧、メンテナンスタスク、アップグレード手順
   - Docker マルチステージビルド、Dockerfile ベストプラクティス
   - Kubernetes デプロイメント、YAML テンプレート、ネットワーク
 
@@ -81,25 +84,25 @@
 → Reference [Error Handling Guide](error-handling.md) for error codes and retry strategies
 
 **Extend the system**
-→ Follow [Extension Guide](extension-guide.md) for adding custom procedures and types
+→ Follow [Extension and Customization Guide](extension-guide.md) for adding custom procedures, types, and query gating
 
 ## 📋 Document Overview
 
 | Document | Size | Topics | Audience |
 |----------|------|--------|----------|
 | Installation | 4 KB | Build, setup, requirements | New users, DevOps |
-| Usage | 6 KB | Examples, queries, vectors | Developers |
+| Usage | 6 KB | Examples, queries, vectors, Neo4j compat | Developers |
 | **Client SDK Installation** | **10 KB** | **Node.js, Python, Rust SDKs** | **Developers** ⭐ |
 | Error Handling | 7 KB | Codes, recovery, monitoring | Operators, Developers |
 | Performance Tuning | 7 KB | Profiling, optimization | Operators, Performance engineers |
 | Troubleshooting | 9 KB | Debugging, common issues | Operators, Support |
-| Extension | 9 KB | Custom procedures, types | Advanced developers |
+| Extension and Customization | 9 KB | Custom procedures, types | Advanced developers |
 | Deployment | 11 KB | Docker, K8s, operations | DevOps, Architects |
 
 ## 🎯 Quick Reference
 
 ### Error Codes
-See [Error Handling Guide - Error Code Reference](error-handling.md#1-error-codes) for complete list
+See [Error Handling Guide - Error Code Reference](error-handling.md#1-error-code-reference) for complete list
 
 ### Common Environment Variables
 See [Deployment Guide - Environment Variables](deployment-guide.md#3-environment-variables)
@@ -147,4 +150,4 @@ For help with specific scenarios:
 - **Runtime errors** → [Error Handling Guide](error-handling.md) + [Troubleshooting Guide](troubleshooting.md)
 - **Performance problems** → [Performance Tuning Guide](performance-tuning.md)
 - **Production deployment** → [Deployment Guide](deployment-guide.md)
-- **System extension** → [Extension Guide](extension-guide.md)
+- **System extension/customization** → [Extension and Customization Guide](extension-guide.md)

@@ -28,7 +28,7 @@ rustup component add llvm-tools-embedded
 
 単一操作をプロファイル：
 ```bash
-cargo flamegraph --bin aira-graphdb-native --freq 99 -- --db test.json
+cargo flamegraph --bin aira-graphdb-native --freq 99 -- --db test.db
 ```
 
 CPU 時間の分布を示す `flamegraph.svg` が生成されます。
@@ -38,15 +38,26 @@ CPU 時間の分布を示す `flamegraph.svg` が生成されます。
 Linux 上で Valgrind を利用：
 ```bash
 valgrind --tool=massif --massif-out-file=massif.out \
-  ./target/release/aira-graphdb-native --db test.json
+  ./target/release/aira-graphdb-native --db test.db
 ms_print massif.out
 ```
 
 または heaptrack を利用：
 ```bash
-heaptrack ./target/release/aira-graphdb-native --db test.json
+heaptrack ./target/release/aira-graphdb-native --db test.db
 heaptrack_gui heaptrack.aira-graphdb-native.*.gz
 ```
+
+### 1.4 Native ベンチマークプロファイル
+
+native perf gate は固定プロファイルを使い、結果を `artifacts/native-bench-report.json` に保存します。
+
+| Profile | ワークロード | ベースライン | 合格条件 |
+|---|---|---|---|
+| `P0-LATENCY-BASELINE` | 10万ノードに対する単純 MATCH/RETURN | `concurrency=1` | P95 ≤ 50ms |
+| `P0-NATIVE-READ` | `get_node/get_adjacent/vector_search(topK=10)/lexical_search(topK=10)` | 10万ノード / 10万ベクトル / `concurrency=8` / `warmup=60s` | 3 回実行の中央値で `get_node<=5ms`, `get_adjacent<=10ms`, `vector_search<=30ms`, `lexical_search<=30ms` |
+| `P0-NATIVE-WRITE` | `upsert_nodes/upsert_edges/vector_upsert` | 10,000 writes / batch 100 / `concurrency=8` | 3 回実行の中央値で write P95 ≤ 25ms かつ 10,000 writes ≤ 8,000ms |
+| `P0-NATIVE-SOAK-SMOKE` | read/write ミックス + 異常系注入 | 30 分 | crash count = 0 かつ internal failure rate ≤ 0.1% |
 
 ## 2. ボトルネック識別
 
@@ -55,7 +66,7 @@ heaptrack_gui heaptrack.aira-graphdb-native.*.gz
 | ボトルネック | 症状 | 対応策 |
 |-----------|-----|------|
 | **ネットワークレイテンシ** | 高い `latency_p99_ms`、低 CPU | RPC ラウンドトリップ削減、バッチ操作利用 |
-| **ロック競合** | 高い `LOCK_CONFLICT` エラー率 | 並行ライター削減、トランザクション利用 |
+| **ロック競合** | 高い `WRITE_LOCK_CONFLICT` エラー率 | 並行ライター削減、トランザクション利用 |
 | **ディスク I/O** | 高い `IO_FAILURE` 率、遅い同期 | 高速ストレージ移行、バッチサイズ増加 |
 | **メモリ圧力** | GC ポーズ増加 | コーパスサイズ削減、シャード化 |
 | **パーサオーバーヘッド** | 高 CPU、中程度スループット | プリペアドステートメント利用 |
@@ -118,6 +129,10 @@ await db.upsert_nodes(nodes);
 - クラッシュ時の復旧高速化
 - WAL リプレイ時間短縮
 - 増分バックアップ可能化
+
+**ストレージ形式**:
+
+`aira-graphdb` は compact binary の snapshot/WAL 形式を使用し、旧 JSON 形式も読み込み互換で受け付けます。これにより、以前の pretty-printed JSON よりもシリアライズコストとディスク使用量を削減できます。
 
 **ドキュメントライフサイクル**:
 
@@ -215,10 +230,10 @@ setInterval(() => {
 
 ```bash
 # インスタンス 1
-cargo run --bin aira-graphdb-native -- --db /data/db-1.json
+cargo run --bin aira-graphdb-native -- --db /data/db-1.db
 
 # インスタンス 2
-cargo run --bin aira-graphdb-native -- --db /data/db-2.json
+cargo run --bin aira-graphdb-native -- --db /data/db-2.db
 ```
 
 コーパス ID のハッシュでルーティング：
@@ -257,6 +272,19 @@ pub struct SoakProfile {
 }
 ```
 
+### 5.3 Native ベンチマークしきい値
+
+必要に応じて perf gate のしきい値を上書きできます：
+
+```bash
+AGDB_NATIVE_BENCH_GET_NODE_P95_MS=5
+AGDB_NATIVE_BENCH_GET_ADJ_P95_MS=10
+AGDB_NATIVE_BENCH_VECTOR_P95_MS=30
+AGDB_NATIVE_BENCH_LEXICAL_P95_MS=30
+AGDB_NATIVE_BENCH_WRITE_P95_MS=25
+AGDB_NATIVE_BENCH_WRITE_10K_MS=8000
+```
+
 ## 6. 最適化効果の監視
 
 ### 6.1 前後比較
@@ -288,6 +316,13 @@ CI に追加して性能低下を検出：
     REGRESSION=$(awk 'NR==2{if($1 > baseline*1.1) print 1; else print 0}' baseline.txt current.txt)
     if [ $REGRESSION -eq 1 ]; then exit 1; fi
 ```
+
+### 6.3 Native ベンチマークレポートの見方
+
+- `rounds` は既定で `3`、3 回実行の中央値を使います
+- `thresholds_ms` は現在の perf gate のしきい値です
+- `metrics_ms` は測定された P95 値です
+- `gate_pass=false` の場合、perf gate はリリースをブロックします
 
 ## 7. 一般的なトレードオフ
 

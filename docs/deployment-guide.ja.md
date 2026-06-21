@@ -266,6 +266,20 @@ kubectl logs -n aira-system deployment/aira-graphdb -f
 kubectl port-forward -n aira-system svc/aira-graphdb 3001:3001
 ```
 
+### 2.3 ネイティブ Rust 通信ランタイム
+
+```bash
+# ネイティブ JSON-RPC 通信バイナリを起動
+cargo run --bin aira-graphdb-native -- --db /path/to/aira-graphdb-native.db
+```
+
+`aira-synapse` からネイティブ backend を強制する場合:
+
+```bash
+export MEMGRAPHRAG_BACKEND=aira-graphdb
+export AIRA_GRAPHDB_REPO_PATH=/absolute/path/to/aira-graphdb
+```
+
 ## 3. 環境変数
 
 ### コア設定

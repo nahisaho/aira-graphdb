@@ -102,7 +102,7 @@ The workflow consumes contracts from this repository under `spec/contracts/` and
 Build and run the native JSON-RPC transport binary:
 
 ```bash
-cargo run --bin aira-graphdb-native -- --db /path/to/aira-graphdb-native.json
+cargo run --bin aira-graphdb-native -- --db /path/to/aira-graphdb-native.db
 ```
 
 `aira-synapse` can force this runtime with:

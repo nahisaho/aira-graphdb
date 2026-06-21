@@ -1,0 +1,18 @@
+baseline_id: NEO4J-COMPAT-BASELINE-001
+manifest_id: agdb-cypher-neo4j-compat.v1.0.0
+required_test_ids:
+  - NEO4J-COMPAT-RUN-001
+  - NEO4J-COMPAT-RUN-002
+  - NEO4J-COMPAT-RUN-003
+  - NEO4J-COMPAT-RUN-004
+  - NEO4J-COMPAT-NEG-001
+  - NEO4J-COMPAT-NEG-002
+governance_checks:
+  - baseline_id_matches_contract
+  - manifest_id_matches_contract
+  - required_feature_count_matches_required_status_entries
+  - classified_feature_count_matches_feature_entries
+  - required_entries_cover_req_024
+  - unsupported_entries_cover_req_025
+  - unsupported_clauses_return_unsupported_feature
+  - subquery_clauses_execute

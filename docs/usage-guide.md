@@ -19,12 +19,17 @@ assert!(response.accepted);
 
 ```rust
 use aira_graphdb::graph::InMemoryGraphStore;
-use aira_graphdb::query::execute_query;
+use aira_graphdb::query::{execute_query, execute_query_with_dialect, CypherDialect};
 
 let mut store = InMemoryGraphStore::new();
 execute_query(&mut store, "CREATE (n:Paper {title:'GraphDB'})")?;
 execute_query(&mut store, "MERGE (n:Paper {title:'GraphDB'}) ON MATCH SET n.status='existing'")?;
 let _ = execute_query(&mut store, "MATCH (n:Paper) WITH n RETURN n ORDER BY n.id SKIP 0 LIMIT 1")?;
+let _ = execute_query_with_dialect(
+    &mut store,
+    "MATCH (n) RETURN n UNION MATCH (m) RETURN m",
+    CypherDialect::Neo4jCompat,
+)?;
 # Ok::<(), aira_graphdb::errors::GraphDbError>(())
 ```
 
@@ -47,7 +52,7 @@ Before `APP_READY`, application requests are rejected with `AUTH_REQUIRED`.
 Start sidecar:
 
 ```bash
-cargo run --bin aira-graphdb-native -- --db /path/to/aira-graphdb-native.json
+cargo run --bin aira-graphdb-native -- --db /path/to/aira-graphdb-native.db
 ```
 
 Register nodes/edges:
@@ -105,6 +110,8 @@ The report includes:
 - `mandatory_negative_cases_satisfied`
 - `failed_test_ids`
 - clause-level and feature-level PASS/FAIL
+
+Neo4j-compatible Cypher is guarded: `FOREACH`, variable-length paths, and `shortestPath(...)` are rejected with `UNSUPPORTED_FEATURE` plus an `unsupported_clause` detail.
 
 ## 4. Audit Events
 
@@ -164,6 +171,7 @@ artifacts/native-audit-events.json
 | `CREATE`, `MERGE`, `SET`, `REMOVE`, `DELETE`, `DETACH` | Supported (profile subset) | `MERGE` on-create/on-match semantics implemented |
 | `UNWIND` + aggregation | Supported | `count/sum/avg/min/max/collect` |
 | `CALL` + APOC subset (`apoc.meta.schema`, `apoc.coll.toSet`, `apoc.text.join`, `apoc.refactor.rename.label`) | Supported (manifest-based) | Allowed set is fixed by `spec/contracts/apoc-procedure-manifest.v1.0.0.yaml` |
+| Neo4j-compatible Cypher dialect | Supported (guarded) | `execute_query_with_dialect(..., CypherDialect::Neo4jCompat)` supports `UNION` / `UNION ALL` / `CASE` and rejects unsupported extensions with `UNSUPPORTED_FEATURE` |
 | Relationship traversal pattern (`()-[]->()`, `()-[]-()`) | Supported | Single-hop traversal with `OPTIONAL MATCH/WHERE/WITH/ORDER BY/SKIP/LIMIT` contract cases |
 
 ## 7. Storage Port Compatibility with aira-synapse
@@ -199,7 +207,7 @@ Compatibility workflow references:
 
 - Rust binary: `aira-graphdb-native` (`src/bin/aira-graphdb-native.rs`)
 - Transport: JSON-RPC over stdin/stdout
-- Persistent state: `--db <path>` JSON snapshot file
+- Persistent state: `--db <path>` compact binary snapshot/WAL file
 
 This replaces the previous SQLite compatibility fallback for the `aira-graphdb` backend path.
 

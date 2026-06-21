@@ -30,7 +30,7 @@
 | `DETERMINISTIC_CONFLICT` | 書込競合検出 | 並行更新を調査 |
 | `PROCESS_CRASH` | Sidecar 異常終了 | 原因確認、再起動 |
 | `IO_FAILURE` | 読み書きエラー | ディスク空き、パーミッション確認 |
-| `LOCK_CONFLICT` | 書込ロック競合 | 並行操作をレビュー |
+| `WRITE_LOCK_CONFLICT` | 書込ロック競合 | 並行操作をレビュー |
 
 ### 1.3 ログのフィルタリングと検索
 
@@ -76,30 +76,30 @@ cat aira-graphdb-native.log | tail -50
 ```
 
 **対応**:
-1. Sidecar 起動: `cargo run --bin aira-graphdb-native -- --db /path/to/db.json`
+1. Sidecar 起動: `cargo run --bin aira-graphdb-native -- --db /path/to/db.db`
 2. ポートが使用中でないか確認: `lsof -i :7687`
 3. ファイアウォール確認: `sudo ufw status`（Linux）
 4. クラッシュしている場合、`<db>.native-audit.log` の `PROCESS_CRASH` 確認
 
-### 2.2 問題: 全ての書込で「LOCK_CONFLICT」が発生
+### 2.2 問題: 全ての書込で「WRITE_LOCK_CONFLICT」が発生
 
 **症状**:
 ```
-全ての書込操作が即座に LOCK_CONFLICT で失敗
+全ての書込操作が即座に WRITE_LOCK_CONFLICT で失敗
 ```
 
 **診断**:
 ```bash
-# LOCK_CONFLICT の発生回数
-grep LOCK_CONFLICT <db>.native-audit.log | wc -l
+# WRITE_LOCK_CONFLICT の発生回数
+grep WRITE_LOCK_CONFLICT <db>.native-audit.log | wc -l
 
 # ロック保持者情報を確認
-grep LOCK_CONFLICT <db>.native-audit.log | jq '.details'
+grep WRITE_LOCK_CONFLICT <db>.native-audit.log | jq '.details'
 ```
 
 **対応**:
 1. 別クライアントが書込ロックを保持していないか確認
-2. Sidecar 再起動でスタックしたロック解放: `pkill aira-graphdb-native && restart`
+2. Sidecar を再起動してスタックしたロックを解放し、標準の起動コマンドで再起動
 3. 並行ライター数を削減（高並行では予想動作）
 4. 競合が本質的な場合、コーパス分割を検討
 
@@ -148,7 +148,7 @@ done
 grep OUT_OF_MEMORY <db>.native-audit.log | head
 
 # ヒーププロファイル
-valgrind --tool=massif ./target/release/aira-graphdb-native --db test.json
+valgrind --tool=massif ./target/release/aira-graphdb-native --db test.db
 ```
 
 **対応**:
@@ -185,7 +185,7 @@ journalctl -xe   # システムイベント
 4. コアダンプ有効化でデバッグ:
    ```bash
    ulimit -c unlimited
-   cargo run --bin aira-graphdb-native -- --db test.json
+   cargo run --bin aira-graphdb-native -- --db test.db
    ```
 
 ## 3. デバッグモード
@@ -198,7 +198,7 @@ export AGDB_DEBUG=1
 export RUST_LOG=debug
 
 # デバッグ出力付きで sidecar 実行
-cargo run --bin aira-graphdb-native -- --db test.json 2>&1 | tee debug.log
+cargo run --bin aira-graphdb-native -- --db test.db 2>&1 | tee debug.log
 ```
 
 デバッグ出力に含まれる項目：
@@ -253,11 +253,11 @@ jq 'select(.type == "QUERY_EXECUTED") | {query: .details.query, duration_ms: .de
 ### 4.2 ロック競合の調査
 
 ```bash
-# LOCK_CONFLICT を発生させたリクエスト検索
-jq 'select(.type == "LOCK_CONFLICT") | .details.context' <db>.native-audit.log | sort | uniq -c
+# WRITE_LOCK_CONFLICT を発生させたリクエスト検索
+jq 'select(.type == "WRITE_LOCK_CONFLICT") | .details.context' <db>.native-audit.log | sort | uniq -c
 
 # 最も競合の多いコーパス特定
-jq 'select(.type == "LOCK_CONFLICT") | .details.context' <db>.native-audit.log | \
+jq 'select(.type == "WRITE_LOCK_CONFLICT") | .details.context' <db>.native-audit.log | \
   grep -o "corpus_id=[^,]*" | sort | uniq -c
 ```
 

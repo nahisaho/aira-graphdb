@@ -1,4 +1,4 @@
-# 拡張ガイド（日本語）
+# 拡張・カスタマイズガイド（日本語）
 
 ## 1. カスタム APOC プロシージャの追加
 
@@ -140,6 +140,10 @@ pub struct DbSnapshot {
 ## 3. 新しいクエリ言語サポートの追加
 
 Cypher 以外の追加クエリ言語をサポートするには：
+
+Neo4j 互換 Cypher は `src/query.rs` 内のガード付きダイアレクトとして扱われ、非対応拡張は `UNSUPPORTED_FEATURE` と `unsupported_clause` 詳細付きで拒否されます。
+
+現在のベースラインでは `FOREACH`、`EXISTS {}`、`CALL {}`、`shortestPath(...)`、variable-length path、pattern comprehension、schema/index 変更は部分実行せずに拒否します。
 
 ### 3.1 文法を定義
 

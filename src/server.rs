@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::errors::GraphDbError;
 use crate::protocol::HandshakeRequest;
-use crate::query::{QueryResult, execute_query};
+use crate::query::{CypherDialect, QueryResult, execute_query_with_dialect, resolve_cypher_dialect};
 use crate::runtime::ServerRuntime;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -25,6 +25,8 @@ pub enum ServerRequest {
     Query {
         tx_id: String,
         query: String,
+        #[serde(default)]
+        dialect: Option<CypherDialect>,
     },
     CommitTx {
         tx_id: String,
@@ -238,7 +240,11 @@ fn process_request(
             let tx_id = guard.tx_manager.begin();
             ServerResponse::TxBegun { tx_id }
         }
-        ServerRequest::Query { tx_id, query } => {
+        ServerRequest::Query {
+            tx_id,
+            query,
+            dialect,
+        } => {
             if ctx.state != SessionState::AppReady {
                 record_audit(
                     runtime,
@@ -258,10 +264,14 @@ fn process_request(
                 Ok(guard) => guard,
                 Err(_) => return lock_poisoned_error(),
             };
+            let (resolved_dialect, resolved_query) = resolve_cypher_dialect(&query, dialect);
             match guard
                 .tx_manager
                 .graph_mut(&tx_id)
-                .and_then(|graph| execute_query(graph, &query))
+                .and_then(|graph| {
+                    let dialect = resolved_dialect;
+                    execute_query_with_dialect(graph, &resolved_query, dialect)
+                })
             {
                 Ok(result) => ServerResponse::QueryResult { result },
                 Err(err) => {
@@ -532,6 +542,7 @@ mod tests {
             &ServerRequest::Query {
                 tx_id: tx_id.clone(),
                 query: "CREATE (n:Paper)".to_string(),
+                dialect: Some(CypherDialect::OpenCypher9),
             },
         );
         assert!(matches!(create, ServerResponse::QueryResult { .. }));
@@ -583,6 +594,90 @@ mod tests {
         handle.join().expect("join").expect("serve ok");
         let events = StorageEngine::new(&db).load_audit_events().expect("audit");
         assert!(events.iter().any(|e| e.event_type == "AUTH_REQUIRED_REJECTED"));
+        let _ = std::fs::remove_file(&db);
+        let _ = std::fs::remove_file(db.with_extension("wal"));
+        let _ = std::fs::remove_file(db.with_extension("audit.log"));
+        let _ = std::fs::remove_file(db.with_extension("write.lock"));
+    }
+
+    #[test]
+    fn query_request_accepts_dialect_override() {
+        let db = temp_db();
+        let runtime = ServerRuntime::start(
+            RuntimeConfig {
+                mode: DeploymentMode::Server,
+                db_file: db.clone(),
+                port: None,
+                concurrency_profile: Some("P0-SERVER-CONCURRENCY".to_string()),
+            },
+            auth_config(),
+        )
+        .expect("runtime");
+        let transport = ServerTransport::bind("127.0.0.1:0", runtime).expect("bind");
+        let addr = transport.local_addr().expect("addr");
+        let handle = thread::spawn(move || transport.run(Some(1)));
+
+        let mut stream = TcpStream::connect(addr).expect("connect");
+        let mut reader = BufReader::new(stream.try_clone().expect("clone"));
+
+        let _ = send(
+            &mut stream,
+            &mut reader,
+            &ServerRequest::Handshake {
+                protocol_version: "protocol-p0@1.0.0".to_string(),
+                canonical_type_system_version: "canonical-types@1.0.0".to_string(),
+            },
+        );
+        let _ = send(
+            &mut stream,
+            &mut reader,
+            &ServerRequest::Auth {
+                bearer_token: make_token(),
+            },
+        );
+        let tx_begun = send(&mut stream, &mut reader, &ServerRequest::BeginTx);
+        let tx_id = match tx_begun {
+            ServerResponse::TxBegun { tx_id } => tx_id,
+            _ => panic!("expected begin tx"),
+        };
+        let _ = send(
+            &mut stream,
+            &mut reader,
+            &ServerRequest::Query {
+                tx_id: tx_id.clone(),
+                query: "CREATE (n:Paper)".to_string(),
+                dialect: Some(CypherDialect::OpenCypher9),
+            },
+        );
+        let _ = send(
+            &mut stream,
+            &mut reader,
+            &ServerRequest::Query {
+                tx_id: tx_id.clone(),
+                query: "CREATE (n:Paper)".to_string(),
+                dialect: Some(CypherDialect::OpenCypher9),
+            },
+        );
+        let response = send(
+            &mut stream,
+            &mut reader,
+            &ServerRequest::Query {
+                tx_id,
+                query: "MATCH (n) RETURN n UNION MATCH (m) RETURN m".to_string(),
+                dialect: Some(CypherDialect::Neo4jCompat),
+            },
+        );
+        match response {
+            ServerResponse::QueryResult { result } => match result {
+                QueryResult::Nodes(nodes) => assert_eq!(nodes.len(), 2),
+                _ => panic!("expected nodes"),
+            },
+            _ => panic!("expected query result"),
+        }
+
+        drop(reader);
+        drop(stream);
+        handle.join().expect("join").expect("serve ok");
         let _ = std::fs::remove_file(&db);
         let _ = std::fs::remove_file(db.with_extension("wal"));
         let _ = std::fs::remove_file(db.with_extension("audit.log"));
@@ -729,6 +824,7 @@ mod tests {
             &ServerRequest::Query {
                 tx_id,
                 query: "SET NODE n999 title='x'".to_string(),
+                dialect: None,
             },
         );
         match response {

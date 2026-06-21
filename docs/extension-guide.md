@@ -141,6 +141,10 @@ In `src/bin/aira-graphdb-native.rs`:
 
 To support additional query languages (not Cypher):
 
+Neo4j-compatible Cypher is handled as a guarded dialect inside `src/query.rs`; unsupported extensions are rejected with `UNSUPPORTED_FEATURE` and an `unsupported_clause` detail.
+
+In the current baseline, `FOREACH`, `EXISTS {}`, `CALL {}`, `shortestPath(...)`, variable-length paths, pattern comprehension, and schema/index mutation remain rejected rather than partially executed.
+
 ### 3.1 Define grammar
 
 Create new contract:

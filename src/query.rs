@@ -1,7 +1,14 @@
-use crate::contracts::load_apoc_procedure_manifest;
+use crate::contracts::{load_apoc_procedure_manifest, load_neo4j_compat_manifest};
 use crate::errors::{ErrorCode, GraphDbError};
 use crate::graph::{GraphNode, InMemoryGraphStore, Properties, Value};
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CypherDialect {
+    OpenCypher9,
+    Neo4jCompat,
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum QueryResult {
@@ -28,7 +35,29 @@ pub fn resolve_row_comparison_strategy(query: &str) -> RowComparisonStrategy {
 }
 
 pub fn execute_query(store: &mut InMemoryGraphStore, query: &str) -> Result<QueryResult, GraphDbError> {
+    execute_query_with_dialect(store, query, CypherDialect::OpenCypher9)
+}
+
+pub fn execute_query_with_dialect(
+    store: &mut InMemoryGraphStore,
+    query: &str,
+    dialect: CypherDialect,
+) -> Result<QueryResult, GraphDbError> {
     let mut q = query.trim().to_string();
+    if matches!(dialect, CypherDialect::Neo4jCompat) {
+        if let Some(error) = reject_neo4j_compat_extension(&q) {
+            return Err(error);
+        }
+    }
+    if let Some((branches, mode)) = split_top_level_union(&q) {
+        return execute_union_query(store, &branches, mode, dialect);
+    }
+    if q.starts_with("RETURN ") {
+        return execute_return_expression(&q);
+    }
+    if q.starts_with("CALL {") {
+        return execute_call_subquery(store, &q, dialect);
+    }
     if (q.starts_with("MATCH ") || q.starts_with("OPTIONAL MATCH "))
         && q.contains(" WITH n,r,m RETURN n,r,m")
     {
@@ -38,6 +67,9 @@ pub fn execute_query(store: &mut InMemoryGraphStore, query: &str) -> Result<Quer
         q = normalize_with_query(&q)?;
     }
 
+    if q.starts_with("MATCH ") && q.contains(" WHERE EXISTS {") {
+        return execute_exists_subquery_match(store, &q, dialect);
+    }
     if q.starts_with("MATCH ") {
         if q.contains("-[r]->(") || q.contains("-[r]-(") {
             return execute_match_relationship(store, &q, false);
@@ -79,9 +111,317 @@ pub fn execute_query(store: &mut InMemoryGraphStore, query: &str) -> Result<Quer
     .with_detail("unsupported_clause", q.split_whitespace().next().unwrap_or("UNKNOWN")))
 }
 
+fn reject_neo4j_compat_extension(query: &str) -> Option<GraphDbError> {
+    let manifest = load_neo4j_compat_manifest();
+    let mut unsupported: Vec<_> = manifest
+        .features
+        .into_iter()
+        .filter(|feature| feature.status == "unsupported")
+        .collect();
+    unsupported.sort_by(|a, b| b.clause.len().cmp(&a.clause.len()));
+    for feature in unsupported {
+        if feature_matches_query(query, &feature.clause) {
+            return Some(
+                GraphDbError::new(
+                    ErrorCode::UnsupportedFeature,
+                    format!("unsupported cypher extension for Neo4j compat baseline: {}", feature.clause),
+                )
+                .with_detail("unsupported_clause", &feature.clause),
+            );
+        }
+    }
+    None
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UnionMode {
+    Distinct,
+    All,
+}
+
+fn split_top_level_union(query: &str) -> Option<(Vec<String>, UnionMode)> {
+    let upper = query.to_ascii_uppercase();
+    let bytes = upper.as_bytes();
+    let mut depth = 0usize;
+    let mut in_single_quote = false;
+    let mut start = 0usize;
+    let mut branches = Vec::new();
+    let mut mode: Option<UnionMode> = None;
+    let mut idx = 0usize;
+
+    while idx < bytes.len() {
+        let ch = bytes[idx] as char;
+        if ch == '\'' {
+            in_single_quote = !in_single_quote;
+            idx += 1;
+            continue;
+        }
+        if in_single_quote {
+            idx += 1;
+            continue;
+        }
+        match ch {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+        if depth == 0 {
+            if upper[idx..].starts_with("UNION ALL")
+                && is_union_boundary(&upper, idx, idx + "UNION ALL".len())
+            {
+                let branch = query[start..idx].trim();
+                if branch.is_empty() {
+                    return None;
+                }
+                branches.push(branch.to_string());
+                mode = Some(match mode {
+                    Some(UnionMode::Distinct) => return None,
+                    _ => UnionMode::All,
+                });
+                idx += "UNION ALL".len();
+                start = skip_ws_forward(query, idx);
+                idx = start;
+                continue;
+            }
+            if upper[idx..].starts_with("UNION")
+                && is_union_boundary(&upper, idx, idx + "UNION".len())
+            {
+                let branch = query[start..idx].trim();
+                if branch.is_empty() {
+                    return None;
+                }
+                branches.push(branch.to_string());
+                mode = Some(match mode {
+                    Some(UnionMode::All) => return None,
+                    _ => UnionMode::Distinct,
+                });
+                idx += "UNION".len();
+                start = skip_ws_forward(query, idx);
+                idx = start;
+                continue;
+            }
+        }
+        idx += 1;
+    }
+
+    if branches.is_empty() {
+        return None;
+    }
+    let tail = query[start..].trim();
+    if tail.is_empty() {
+        return None;
+    }
+    branches.push(tail.to_string());
+    mode.map(|mode| (branches, mode))
+}
+
+fn is_union_boundary(source: &str, start: usize, end: usize) -> bool {
+    let before_ok = start == 0 || source[..start].chars().last().is_none_or(|c| c.is_whitespace());
+    let after_ok = end >= source.len()
+        || source[end..]
+            .chars()
+            .next()
+            .is_none_or(|c| c.is_whitespace());
+    before_ok && after_ok
+}
+
+fn skip_ws_forward(source: &str, mut idx: usize) -> usize {
+    while idx < source.len() {
+        let ch = source[idx..].chars().next().unwrap();
+        if !ch.is_whitespace() {
+            break;
+        }
+        idx += ch.len_utf8();
+    }
+    idx
+}
+
+fn execute_union_query(
+    store: &mut InMemoryGraphStore,
+    branches: &[String],
+    mode: UnionMode,
+    dialect: CypherDialect,
+) -> Result<QueryResult, GraphDbError> {
+    let mut node_rows: Vec<GraphNode> = Vec::new();
+    let mut table_columns: Option<Vec<String>> = None;
+    let mut table_rows: Vec<Vec<Value>> = Vec::new();
+    let mut result_kind: Option<&'static str> = None;
+
+    for branch in branches {
+        let result = execute_query_with_dialect(store, branch, dialect)?;
+        match result {
+            QueryResult::Nodes(nodes) => {
+                if result_kind == Some("table") {
+                    return Err(GraphDbError::new(
+                        ErrorCode::UnsupportedFeature,
+                        "UNION branch result kinds must match",
+                    )
+                    .with_detail("unsupported_clause", "UNION"));
+                }
+                result_kind = Some("nodes");
+                node_rows.extend(nodes);
+            }
+            QueryResult::Table { columns, rows } => {
+                if result_kind == Some("nodes") {
+                    return Err(GraphDbError::new(
+                        ErrorCode::UnsupportedFeature,
+                        "UNION branch result kinds must match",
+                    )
+                    .with_detail("unsupported_clause", "UNION"));
+                }
+                if let Some(existing) = &table_columns {
+                    if existing != &columns {
+                        return Err(GraphDbError::new(
+                            ErrorCode::UnsupportedFeature,
+                            "UNION branch columns must match",
+                        )
+                        .with_detail("unsupported_clause", "UNION"));
+                    }
+                } else {
+                    table_columns = Some(columns);
+                }
+                result_kind = Some("table");
+                table_rows.extend(rows);
+            }
+            QueryResult::Ack => {
+                return Err(GraphDbError::new(
+                    ErrorCode::UnsupportedFeature,
+                    "UNION does not support ACK branches",
+                )
+                .with_detail("unsupported_clause", "UNION"));
+            }
+        }
+    }
+
+    match result_kind {
+        Some("nodes") => {
+            if let UnionMode::Distinct = mode {
+                let mut seen = HashSet::new();
+                node_rows.retain(|node| seen.insert(node.id.clone()));
+            }
+            Ok(QueryResult::Nodes(node_rows))
+        }
+        Some("table") => {
+            if let UnionMode::Distinct = mode {
+                let mut seen = Vec::new();
+                table_rows.retain(|row| {
+                    if seen.contains(row) {
+                        false
+                    } else {
+                        seen.push(row.clone());
+                        true
+                    }
+                });
+            }
+            Ok(QueryResult::Table {
+                columns: table_columns.unwrap_or_default(),
+                rows: table_rows,
+            })
+        }
+        _ => Err(GraphDbError::new(
+            ErrorCode::UnsupportedFeature,
+            "UNION requires at least one branch",
+        )
+        .with_detail("unsupported_clause", "UNION")),
+    }
+}
+
+fn execute_return_expression(query: &str) -> Result<QueryResult, GraphDbError> {
+    let expr = query.trim_start_matches("RETURN ").trim();
+    if let Some(case_expr) = expr.strip_prefix("CASE ") {
+        return execute_case_expression(case_expr);
+    }
+    Err(
+        GraphDbError::new(ErrorCode::UnsupportedFeature, "unsupported RETURN expression")
+            .with_detail("unsupported_clause", "RETURN"),
+    )
+}
+
+fn execute_case_expression(case_expr: &str) -> Result<QueryResult, GraphDbError> {
+    let case_expr = case_expr
+        .strip_prefix("WHEN ")
+        .ok_or_else(|| syntax_error("CASE requires WHEN"))?;
+    let then_idx = case_expr
+        .find(" THEN ")
+        .ok_or_else(|| syntax_error("CASE requires THEN"))?;
+    let else_idx = case_expr
+        .find(" ELSE ")
+        .ok_or_else(|| syntax_error("CASE requires ELSE"))?;
+    let end_idx = case_expr
+        .rfind(" END")
+        .ok_or_else(|| syntax_error("CASE requires END"))?;
+
+    if then_idx >= else_idx || else_idx >= end_idx {
+        return Err(syntax_error("invalid CASE expression order"));
+    }
+
+    let condition = case_expr[..then_idx].trim();
+    let then_expr = case_expr[then_idx + 6..else_idx].trim();
+    let else_expr = case_expr[else_idx + 6..end_idx].trim();
+    let condition_true = evaluate_case_condition(condition)?;
+    let value = if condition_true {
+        parse_value(then_expr)?
+    } else {
+        parse_value(else_expr)?
+    };
+    Ok(QueryResult::Table {
+        columns: vec!["case".to_string()],
+        rows: vec![vec![value]],
+    })
+}
+
+fn evaluate_case_condition(condition: &str) -> Result<bool, GraphDbError> {
+    let mut split = condition.splitn(2, '=');
+    let left = split.next().unwrap_or_default().trim();
+    let right = split
+        .next()
+        .ok_or_else(|| syntax_error("CASE condition must be equality"))?;
+    let left_value = parse_value(left)?;
+    let right_value = parse_value(right.trim())?;
+    Ok(left_value == right_value)
+}
+
+pub fn resolve_cypher_dialect(query: &str, requested: Option<CypherDialect>) -> (CypherDialect, String) {
+    if let Some(dialect) = requested {
+        return (dialect, query.trim().to_string());
+    }
+
+    let trimmed = query.trim();
+    if let Some(rest) = trimmed.strip_prefix("CYPHER neo4j-compat ") {
+        return (CypherDialect::Neo4jCompat, rest.trim().to_string());
+    }
+    if let Some(rest) = trimmed.strip_prefix("CYPHER NEO4J_COMPAT ") {
+        return (CypherDialect::Neo4jCompat, rest.trim().to_string());
+    }
+    (CypherDialect::OpenCypher9, trimmed.to_string())
+}
+
+fn feature_matches_query(query: &str, clause: &str) -> bool {
+    let compact = query.to_ascii_uppercase();
+    match clause {
+        "UNION" => compact.contains(" UNION ") || compact.ends_with(" UNION") || compact.starts_with("UNION "),
+        "UNION ALL" => compact.contains(" UNION ALL "),
+        "FOREACH" => compact.contains("FOREACH "),
+        "CASE" => compact.contains(" CASE "),
+        "EXISTS" => compact.contains("EXISTS(") || compact.contains("EXISTS {"),
+        "CALL {" => compact.contains("CALL {"),
+        "shortestPath" => compact.contains("SHORTESTPATH("),
+        "variable-length path" => {
+            (compact.contains("-[*") || compact.contains("[*")) && !compact.contains("SHORTESTPATH(")
+        }
+        "pattern comprehension" => {
+            (compact.contains("RETURN [") || compact.contains("WITH [") || compact.contains("= ["))
+                && compact.contains("|")
+                && compact.contains("]")
+        }
+        "LOAD CSV" => compact.contains("LOAD CSV"),
+        _ => false,
+    }
+}
+
 fn execute_match(store: &InMemoryGraphStore, query: &str) -> Result<QueryResult, GraphDbError> {
     let compact = query.trim();
-    if !compact.starts_with("MATCH ") || !compact.contains("RETURN n") {
+    if !compact.starts_with("MATCH ") || !compact.contains("RETURN ") {
         return Err(
             GraphDbError::new(ErrorCode::UnsupportedFeature, "unsupported MATCH form")
                 .with_detail("unsupported_clause", "MATCH"),
@@ -367,6 +707,97 @@ fn execute_call(store: &mut InMemoryGraphStore, query: &str) -> Result<QueryResu
         _ => Err(
             GraphDbError::new(ErrorCode::UnsupportedFeature, format!("unsupported procedure: {name}"))
                 .with_detail("unsupported_clause", "CALL"),
+        ),
+    }
+}
+
+fn execute_call_subquery(
+    store: &mut InMemoryGraphStore,
+    query: &str,
+    dialect: CypherDialect,
+) -> Result<QueryResult, GraphDbError> {
+    let call = query
+        .strip_prefix("CALL {")
+        .ok_or_else(|| syntax_error("invalid CALL subquery syntax"))?;
+    let (inner_query, tail) = split_subquery_body(call)?;
+    let tail = tail.trim_start();
+    let Some(projection) = tail.strip_prefix("RETURN ") else {
+        return Err(
+            GraphDbError::new(ErrorCode::UnsupportedFeature, "CALL subquery requires RETURN")
+                .with_detail("unsupported_clause", "CALL {"),
+        );
+    };
+    let inner_result = execute_query_with_dialect(store, inner_query.trim(), dialect)?;
+    match projection.trim() {
+        "count(*)" => Ok(QueryResult::Table {
+            columns: vec!["count".to_string()],
+            rows: vec![vec![Value::Int64(subquery_row_count(&inner_result)? as i64)]],
+        }),
+        "*" => Ok(inner_result),
+        _ => Err(
+            GraphDbError::new(
+                ErrorCode::UnsupportedFeature,
+                "unsupported CALL subquery projection",
+            )
+            .with_detail("unsupported_clause", "CALL {"),
+        ),
+    }
+}
+
+fn execute_exists_subquery_match(
+    store: &InMemoryGraphStore,
+    query: &str,
+    dialect: CypherDialect,
+) -> Result<QueryResult, GraphDbError> {
+    let marker = " WHERE EXISTS {";
+    let exists_idx = query.find(marker).ok_or_else(|| syntax_error("invalid EXISTS subquery syntax"))?;
+    let outer_match = query[..exists_idx].trim();
+    let after_marker = &query[exists_idx + marker.len()..];
+    let (inner_query, tail) = split_subquery_body(after_marker)?;
+    let mut subquery_store = store.clone();
+    let inner_result = execute_query_with_dialect(&mut subquery_store, inner_query.trim(), dialect)?;
+    if subquery_row_count(&inner_result)? == 0 {
+        return Ok(QueryResult::Nodes(Vec::new()));
+    }
+    let rewritten = format!("{} {}", outer_match, tail.trim_start());
+    execute_match(store, &rewritten)
+}
+
+fn split_subquery_body(body: &str) -> Result<(&str, &str), GraphDbError> {
+    let mut depth = 1usize;
+    let mut in_single_quote = false;
+    for (idx, ch) in body.char_indices() {
+        if ch == '\'' {
+            in_single_quote = !in_single_quote;
+            continue;
+        }
+        if in_single_quote {
+            continue;
+        }
+        match ch {
+            '{' => depth += 1,
+            '}' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return Ok((&body[..idx], &body[idx + 1..]));
+                }
+            }
+            _ => {}
+        }
+    }
+    Err(syntax_error("invalid subquery body"))
+}
+
+fn subquery_row_count(result: &QueryResult) -> Result<usize, GraphDbError> {
+    match result {
+        QueryResult::Nodes(nodes) => Ok(nodes.len()),
+        QueryResult::Table { rows, .. } => Ok(rows.len()),
+        QueryResult::Ack => Err(
+            GraphDbError::new(
+                ErrorCode::UnsupportedFeature,
+                "subquery must produce rows",
+            )
+            .with_detail("unsupported_clause", "CALL {"),
         ),
     }
 }
@@ -860,22 +1291,25 @@ fn parse_match_filters(query: &str) -> Result<(Option<String>, Option<String>), 
     } else {
         None
     };
-    if !remainder.starts_with("RETURN n") && !remainder.starts_with("WHERE ") {
+    if !remainder.starts_with("RETURN ") && !remainder.starts_with("WHERE ") {
         return Err(GraphDbError::new(
             ErrorCode::UnsupportedFeature,
             "unsupported MATCH remainder",
         ));
     }
 
-    if remainder.starts_with("RETURN n") {
+    if remainder.starts_with("RETURN ") {
+        if remainder.split_whitespace().nth(1).is_none() {
+            return Err(syntax_error("RETURN requires a projection variable"));
+        }
         return Ok((label, None));
     }
 
     // WHERE n.id = 'n1' RETURN n
     let where_part = remainder.trim_start_matches("WHERE ").trim();
     let return_idx = where_part
-        .find("RETURN n")
-        .ok_or_else(|| syntax_error("WHERE must end with RETURN n"))?;
+        .find("RETURN ")
+        .ok_or_else(|| syntax_error("WHERE must end with RETURN"))?;
     let condition = where_part[..return_idx].trim();
     let mut split = condition.splitn(2, '=');
     let left = split.next().unwrap_or_default().trim();
@@ -928,6 +1362,67 @@ mod tests {
         assert_eq!(err.code, ErrorCode::UnsupportedFeature);
         let details = err.details.expect("details required");
         assert_eq!(details.get("unsupported_clause").map(String::as_str), Some("CALL"));
+    }
+
+    #[test]
+    fn supports_exists_subquery_in_match_where() {
+        let mut store = InMemoryGraphStore::new();
+        store.create_node(vec!["Paper".to_string()], Properties::new());
+        store.create_node(vec!["Paper".to_string()], Properties::new());
+
+        let result = execute_query(
+            &mut store,
+            "MATCH (n) WHERE EXISTS { MATCH (m) RETURN m } RETURN n",
+        )
+        .expect("exists subquery");
+
+        match result {
+            QueryResult::Nodes(nodes) => assert_eq!(nodes.len(), 2),
+            _ => panic!("expected nodes"),
+        }
+    }
+
+    #[test]
+    fn supports_call_subquery_count_projection() {
+        let mut store = InMemoryGraphStore::new();
+        store.create_node(vec!["Paper".to_string()], Properties::new());
+        store.create_node(vec!["Paper".to_string()], Properties::new());
+
+        let result = execute_query_with_dialect(
+            &mut store,
+            "CALL { MATCH (n) RETURN n } RETURN count(*)",
+            CypherDialect::Neo4jCompat,
+        )
+        .expect("call subquery");
+
+        match result {
+            QueryResult::Table { rows, .. } => {
+                assert_eq!(rows.len(), 1);
+                assert_eq!(rows[0][0], Value::Int64(2));
+            }
+            _ => panic!("expected table"),
+        }
+    }
+
+    #[test]
+    fn rejects_neo4j_compat_path_like_clauses_with_specific_clause_details() {
+        let cases = [
+            ("FOREACH (x IN [1] | CREATE (n:Probe {value:x}))", "FOREACH"),
+            ("MATCH p=shortestPath((a)-[*]->(b)) RETURN p", "shortestPath"),
+            ("MATCH p=(a)-[*1..3]->(b) RETURN p", "variable-length path"),
+        ];
+
+        for (query, expected_clause) in cases {
+            let mut store = InMemoryGraphStore::new();
+            let err = execute_query_with_dialect(&mut store, query, CypherDialect::Neo4jCompat)
+                .expect_err("unsupported in compat mode");
+            assert_eq!(err.code, ErrorCode::UnsupportedFeature);
+            let details = err.details.expect("details required");
+            assert_eq!(
+                details.get("unsupported_clause").map(String::as_str),
+                Some(expected_clause)
+            );
+        }
     }
 
     #[test]
@@ -1201,5 +1696,65 @@ mod tests {
             resolve_row_comparison_strategy("MATCH (n) RETURN n"),
             RowComparisonStrategy::Multiset
         );
+    }
+
+    #[test]
+    fn supports_union_and_union_all_in_neo4j_compat_mode() {
+        let mut store = InMemoryGraphStore::new();
+        execute_query(&mut store, "CREATE (n:Paper)").expect("create 1");
+        execute_query(&mut store, "CREATE (n:Paper)").expect("create 2");
+
+        let union = execute_query_with_dialect(
+            &mut store,
+            "MATCH (n) RETURN n UNION MATCH (m) RETURN m",
+            CypherDialect::Neo4jCompat,
+        )
+        .expect("union should execute");
+        match union {
+            QueryResult::Nodes(nodes) => assert_eq!(nodes.len(), 2),
+            _ => panic!("expected nodes"),
+        }
+
+        let union_all = execute_query_with_dialect(
+            &mut store,
+            "MATCH (n) RETURN n UNION ALL MATCH (m) RETURN m",
+            CypherDialect::Neo4jCompat,
+        )
+        .expect("union all should execute");
+        match union_all {
+            QueryResult::Nodes(nodes) => assert_eq!(nodes.len(), 4),
+            _ => panic!("expected nodes"),
+        }
+    }
+
+    #[test]
+    fn supports_simple_case_expression_in_return_clause() {
+        let mut store = InMemoryGraphStore::new();
+        let result = execute_query(&mut store, "RETURN CASE WHEN 1 = 1 THEN 1 ELSE 0 END")
+            .expect("case should execute");
+        match result {
+            QueryResult::Table { columns, rows } => {
+                assert_eq!(columns, vec!["case".to_string()]);
+                assert_eq!(rows, vec![vec![Value::Int64(1)]]);
+            }
+            _ => panic!("expected table"),
+        }
+    }
+
+    #[test]
+    fn resolves_dialect_from_explicit_override_and_query_prefix() {
+        let (dialect, stripped) = resolve_cypher_dialect(
+            "CYPHER neo4j-compat MATCH (n) RETURN n",
+            None,
+        );
+        assert_eq!(dialect, CypherDialect::Neo4jCompat);
+        assert_eq!(stripped, "MATCH (n) RETURN n");
+
+        let (dialect, stripped) = resolve_cypher_dialect(
+            "MATCH (n) RETURN n",
+            Some(CypherDialect::Neo4jCompat),
+        );
+        assert_eq!(dialect, CypherDialect::Neo4jCompat);
+        assert_eq!(stripped, "MATCH (n) RETURN n");
     }
 }

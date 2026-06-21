@@ -1,0 +1,191 @@
+{
+  "manifest_id": "agdb-cypher-neo4j-compat.v1.0.0",
+  "baseline_mode": "closed_world",
+  "snapshot_ref": "4f9c2d6a7b8e1f0c2a4d6e7f8b9c0d1e2f3a4b5c",
+  "required_feature_count": 21,
+  "classified_feature_count": 26,
+  "features": [
+    {
+      "feature_id": "MATCH",
+      "clause": "MATCH",
+      "status": "required",
+      "covers_req": ["REQ-AGDB-024"],
+      "covers_acceptance": ["CYPHER-NEO4J-001"]
+    },
+    {
+      "feature_id": "OPTIONAL_MATCH",
+      "clause": "OPTIONAL MATCH",
+      "status": "required",
+      "covers_req": ["REQ-AGDB-024"],
+      "covers_acceptance": ["CYPHER-NEO4J-002"]
+    },
+    {
+      "feature_id": "WHERE",
+      "clause": "WHERE",
+      "status": "required",
+      "covers_req": ["REQ-AGDB-024"],
+      "covers_acceptance": ["CYPHER-NEO4J-003"]
+    },
+    {
+      "feature_id": "WITH",
+      "clause": "WITH",
+      "status": "required",
+      "covers_req": ["REQ-AGDB-024"],
+      "covers_acceptance": ["CYPHER-NEO4J-004"]
+    },
+    {
+      "feature_id": "RETURN",
+      "clause": "RETURN",
+      "status": "required",
+      "covers_req": ["REQ-AGDB-024"],
+      "covers_acceptance": ["CYPHER-NEO4J-005"]
+    },
+    {
+      "feature_id": "CREATE",
+      "clause": "CREATE",
+      "status": "required",
+      "covers_req": ["REQ-AGDB-024"],
+      "covers_acceptance": ["CYPHER-NEO4J-006"]
+    },
+    {
+      "feature_id": "MERGE",
+      "clause": "MERGE",
+      "status": "required",
+      "covers_req": ["REQ-AGDB-024"],
+      "covers_acceptance": ["CYPHER-NEO4J-007"]
+    },
+    {
+      "feature_id": "DELETE",
+      "clause": "DELETE",
+      "status": "required",
+      "covers_req": ["REQ-AGDB-024"],
+      "covers_acceptance": ["CYPHER-NEO4J-008"]
+    },
+    {
+      "feature_id": "DETACH_DELETE",
+      "clause": "DETACH DELETE",
+      "status": "required",
+      "covers_req": ["REQ-AGDB-024"],
+      "covers_acceptance": ["CYPHER-NEO4J-009"]
+    },
+    {
+      "feature_id": "SET",
+      "clause": "SET",
+      "status": "required",
+      "covers_req": ["REQ-AGDB-024"],
+      "covers_acceptance": ["CYPHER-NEO4J-010"]
+    },
+    {
+      "feature_id": "REMOVE",
+      "clause": "REMOVE",
+      "status": "required",
+      "covers_req": ["REQ-AGDB-024"],
+      "covers_acceptance": ["CYPHER-NEO4J-011"]
+    },
+    {
+      "feature_id": "UNWIND",
+      "clause": "UNWIND",
+      "status": "required",
+      "covers_req": ["REQ-AGDB-024"],
+      "covers_acceptance": ["CYPHER-NEO4J-012"]
+    },
+    {
+      "feature_id": "CALL_APOC",
+      "clause": "CALL apoc.*",
+      "status": "required",
+      "covers_req": ["REQ-AGDB-024", "REQ-AGDB-025"],
+      "covers_acceptance": ["CYPHER-NEO4J-013"]
+    },
+    {
+      "feature_id": "APOC_META",
+      "clause": "CALL apoc.meta.schema",
+      "status": "required",
+      "covers_req": ["REQ-AGDB-024"],
+      "covers_acceptance": ["CYPHER-NEO4J-014"]
+    },
+    {
+      "feature_id": "APOC_COLL",
+      "clause": "CALL apoc.coll.*",
+      "status": "required",
+      "covers_req": ["REQ-AGDB-024"],
+      "covers_acceptance": ["CYPHER-NEO4J-015"]
+    },
+    {
+      "feature_id": "APOC_TEXT",
+      "clause": "CALL apoc.text.*",
+      "status": "required",
+      "covers_req": ["REQ-AGDB-024"],
+      "covers_acceptance": ["CYPHER-NEO4J-016"]
+    },
+    {
+      "feature_id": "UNION",
+      "clause": "UNION",
+      "status": "required",
+      "covers_req": ["REQ-AGDB-024"],
+      "covers_acceptance": ["CYPHER-NEO4J-017"]
+    },
+    {
+      "feature_id": "UNION_ALL",
+      "clause": "UNION ALL",
+      "status": "required",
+      "covers_req": ["REQ-AGDB-024"],
+      "covers_acceptance": ["CYPHER-NEO4J-018"]
+    },
+    {
+      "feature_id": "CASE",
+      "clause": "CASE",
+      "status": "required",
+      "covers_req": ["REQ-AGDB-024"],
+      "covers_acceptance": ["CYPHER-NEO4J-019"]
+    },
+    {
+      "feature_id": "FOREACH",
+      "clause": "FOREACH",
+      "status": "unsupported",
+      "covers_req": ["REQ-AGDB-025"],
+      "covers_acceptance": ["CYPHER-NEO4J-NEG-001"]
+    },
+    {
+      "feature_id": "EXISTS",
+      "clause": "EXISTS",
+      "status": "required",
+      "covers_req": ["REQ-AGDB-024"],
+      "covers_acceptance": ["CYPHER-NEO4J-020"]
+    },
+    {
+      "feature_id": "CALL_SUBQUERY",
+      "clause": "CALL {",
+      "status": "required",
+      "covers_req": ["REQ-AGDB-024"],
+      "covers_acceptance": ["CYPHER-NEO4J-021"]
+    },
+    {
+      "feature_id": "SHORTEST_PATH",
+      "clause": "shortestPath",
+      "status": "unsupported",
+      "covers_req": ["REQ-AGDB-025"],
+      "covers_acceptance": ["CYPHER-NEO4J-NEG-004"]
+    },
+    {
+      "feature_id": "VARIABLE_LENGTH_PATH",
+      "clause": "variable-length path",
+      "status": "unsupported",
+      "covers_req": ["REQ-AGDB-025"],
+      "covers_acceptance": ["CYPHER-NEO4J-NEG-005"]
+    },
+    {
+      "feature_id": "PATTERN_COMPREHENSION",
+      "clause": "pattern comprehension",
+      "status": "unsupported",
+      "covers_req": ["REQ-AGDB-025"],
+      "covers_acceptance": ["CYPHER-NEO4J-NEG-006"]
+    },
+    {
+      "feature_id": "LOAD_CSV",
+      "clause": "LOAD CSV",
+      "status": "unsupported",
+      "covers_req": ["REQ-AGDB-025"],
+      "covers_acceptance": ["CYPHER-NEO4J-NEG-007"]
+    }
+  ]
+}

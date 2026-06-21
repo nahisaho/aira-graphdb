@@ -266,6 +266,20 @@ kubectl logs -n aira-system deployment/aira-graphdb -f
 kubectl port-forward -n aira-system svc/aira-graphdb 3001:3001
 ```
 
+### 2.3 Native Rust transport runtime
+
+```bash
+# Start the native JSON-RPC transport binary
+cargo run --bin aira-graphdb-native -- --db /path/to/aira-graphdb-native.db
+```
+
+For `aira-synapse`, force the native backend with:
+
+```bash
+export MEMGRAPHRAG_BACKEND=aira-graphdb
+export AIRA_GRAPHDB_REPO_PATH=/absolute/path/to/aira-graphdb
+```
+
 ## 3. Environment Variables
 
 ### Core Configuration

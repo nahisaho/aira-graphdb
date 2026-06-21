@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
+use std::io::Read;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -9,6 +10,9 @@ use crate::errors::{ErrorCode, GraphDbError};
 use crate::graph::InMemoryGraphStore;
 
 pub const CURRENT_CATALOG_VERSION: u64 = 1;
+const SNAPSHOT_MAGIC: &[u8; 4] = b"AGSN";
+const WAL_MAGIC: &[u8; 4] = b"AGWL";
+const STORAGE_FORMAT_VERSION: u16 = 1;
 
 #[derive(Debug, Clone)]
 pub struct StorageEngine {
@@ -84,15 +88,13 @@ impl StorageEngine {
     }
 
     pub fn load_graph(&self) -> Result<InMemoryGraphStore, GraphDbError> {
-        let raw = fs::read_to_string(&self.db_file).map_err(|e| {
-            GraphDbError::new(ErrorCode::IncompatibleFormat, format!("cannot read db file: {e}"))
-        })?;
-        let snapshot: PersistedSnapshot = serde_json::from_str(&raw).map_err(|e| {
+        let raw = fs::read(&self.db_file).map_err(|e| {
             GraphDbError::new(
                 ErrorCode::IncompatibleFormat,
-                format!("cannot parse db snapshot: {e}"),
+                format!("cannot read db file: {e}"),
             )
         })?;
+        let snapshot = decode_snapshot(&raw)?;
         if snapshot.catalog_version != CURRENT_CATALOG_VERSION {
             return Err(GraphDbError::new(
                 ErrorCode::IncompatibleFormat,
@@ -106,19 +108,20 @@ impl StorageEngine {
     }
 
     pub fn load_cluster_metadata(&self) -> Result<ClusterMetadataCatalog, GraphDbError> {
-        let raw = fs::read_to_string(&self.db_file).map_err(|e| {
-            GraphDbError::new(ErrorCode::IncompatibleFormat, format!("cannot read db file: {e}"))
-        })?;
-        let snapshot: PersistedSnapshot = serde_json::from_str(&raw).map_err(|e| {
+        let raw = fs::read(&self.db_file).map_err(|e| {
             GraphDbError::new(
                 ErrorCode::IncompatibleFormat,
-                format!("cannot parse db snapshot: {e}"),
+                format!("cannot read db file: {e}"),
             )
         })?;
+        let snapshot = decode_snapshot(&raw)?;
         Ok(snapshot.cluster_metadata)
     }
 
-    pub fn persist_cluster_metadata(&self, metadata: ClusterMetadataCatalog) -> Result<(), GraphDbError> {
+    pub fn persist_cluster_metadata(
+        &self,
+        metadata: ClusterMetadataCatalog,
+    ) -> Result<(), GraphDbError> {
         let mut graph = InMemoryGraphStore::new();
         if self.db_file.exists() {
             graph = self.load_graph()?;
@@ -131,7 +134,11 @@ impl StorageEngine {
         self.persist_snapshot_from_struct(&snapshot)
     }
 
-    pub fn persist_after_wal(&self, tx_id: &str, graph: &InMemoryGraphStore) -> Result<(), GraphDbError> {
+    pub fn persist_after_wal(
+        &self,
+        tx_id: &str,
+        graph: &InMemoryGraphStore,
+    ) -> Result<(), GraphDbError> {
         let snapshot = PersistedSnapshot {
             catalog_version: CURRENT_CATALOG_VERSION,
             cluster_metadata: ClusterMetadataCatalog {
@@ -151,15 +158,31 @@ impl StorageEngine {
             return self.load_or_init();
         }
 
-        let raw = fs::read_to_string(&self.wal_file).map_err(|e| {
-            GraphDbError::new(ErrorCode::IncompatibleFormat, format!("cannot read wal file: {e}"))
+        let raw = fs::read(&self.wal_file).map_err(|e| {
+            GraphDbError::new(
+                ErrorCode::IncompatibleFormat,
+                format!("cannot read wal file: {e}"),
+            )
         })?;
         let mut latest: Option<PersistedSnapshot> = None;
-        for line in raw.lines().filter(|line| !line.trim().is_empty()) {
-            let record: WalCommitRecord = serde_json::from_str(line).map_err(|e| {
-                GraphDbError::new(ErrorCode::IncompatibleFormat, format!("invalid wal entry: {e}"))
+        if raw.starts_with(WAL_MAGIC) {
+            latest = decode_binary_wal(&raw)?;
+        } else {
+            let raw_text = String::from_utf8(raw).map_err(|e| {
+                GraphDbError::new(
+                    ErrorCode::IncompatibleFormat,
+                    format!("invalid wal encoding: {e}"),
+                )
             })?;
-            latest = Some(record.snapshot);
+            for line in raw_text.lines().filter(|line| !line.trim().is_empty()) {
+                let record: WalCommitRecord = serde_json::from_str(line).map_err(|e| {
+                    GraphDbError::new(
+                        ErrorCode::IncompatibleFormat,
+                        format!("invalid wal entry: {e}"),
+                    )
+                })?;
+                latest = Some(record.snapshot);
+            }
         }
 
         if let Some(snapshot) = latest {
@@ -174,14 +197,28 @@ impl StorageEngine {
             .create(true)
             .append(true)
             .open(&self.audit_file)
-            .map_err(|e| GraphDbError::new(ErrorCode::IncompatibleFormat, format!("open audit failed: {e}")))?;
-        let payload = serde_json::to_string(&event)
-            .map_err(|e| GraphDbError::new(ErrorCode::IncompatibleFormat, format!("serialize audit failed: {e}")))?;
+            .map_err(|e| {
+                GraphDbError::new(
+                    ErrorCode::IncompatibleFormat,
+                    format!("open audit failed: {e}"),
+                )
+            })?;
+        let payload = serde_json::to_string(&event).map_err(|e| {
+            GraphDbError::new(
+                ErrorCode::IncompatibleFormat,
+                format!("serialize audit failed: {e}"),
+            )
+        })?;
         audit
             .write_all(payload.as_bytes())
             .and_then(|_| audit.write_all(b"\n"))
             .and_then(|_| audit.flush())
-            .map_err(|e| GraphDbError::new(ErrorCode::IncompatibleFormat, format!("append audit failed: {e}")))
+            .map_err(|e| {
+                GraphDbError::new(
+                    ErrorCode::IncompatibleFormat,
+                    format!("append audit failed: {e}"),
+                )
+            })
     }
 
     pub fn load_audit_events(&self) -> Result<Vec<AuditEvent>, GraphDbError> {
@@ -189,12 +226,18 @@ impl StorageEngine {
             return Ok(Vec::new());
         }
         let raw = fs::read_to_string(&self.audit_file).map_err(|e| {
-            GraphDbError::new(ErrorCode::IncompatibleFormat, format!("cannot read audit file: {e}"))
+            GraphDbError::new(
+                ErrorCode::IncompatibleFormat,
+                format!("cannot read audit file: {e}"),
+            )
         })?;
         let mut events = Vec::new();
         for line in raw.lines().filter(|line| !line.trim().is_empty()) {
             let event: AuditEvent = serde_json::from_str(line).map_err(|e| {
-                GraphDbError::new(ErrorCode::IncompatibleFormat, format!("invalid audit entry: {e}"))
+                GraphDbError::new(
+                    ErrorCode::IncompatibleFormat,
+                    format!("invalid audit entry: {e}"),
+                )
             })?;
             events.push(event);
         }
@@ -214,33 +257,174 @@ impl StorageEngine {
         self.persist_snapshot_from_struct(&snapshot)
     }
 
-    fn persist_snapshot_from_struct(&self, snapshot: &PersistedSnapshot) -> Result<(), GraphDbError> {
-        let serialized = serde_json::to_string_pretty(snapshot).map_err(|e| {
-            GraphDbError::new(ErrorCode::IncompatibleFormat, format!("serialize snapshot failed: {e}"))
-        })?;
+    fn persist_snapshot_from_struct(
+        &self,
+        snapshot: &PersistedSnapshot,
+    ) -> Result<(), GraphDbError> {
+        let serialized = encode_snapshot(snapshot)?;
         fs::write(&self.db_file, serialized).map_err(|e| {
-            GraphDbError::new(ErrorCode::IncompatibleFormat, format!("write snapshot failed: {e}"))
+            GraphDbError::new(
+                ErrorCode::IncompatibleFormat,
+                format!("write snapshot failed: {e}"),
+            )
         })
     }
 
     fn append_wal(&self, tx_id: &str, snapshot: &PersistedSnapshot) -> Result<(), GraphDbError> {
         let mut wal = OpenOptions::new()
             .create(true)
-            .append(true)
+            .truncate(true)
+            .write(true)
             .open(&self.wal_file)
-            .map_err(|e| GraphDbError::new(ErrorCode::IncompatibleFormat, format!("open wal failed: {e}")))?;
+            .map_err(|e| {
+                GraphDbError::new(
+                    ErrorCode::IncompatibleFormat,
+                    format!("open wal failed: {e}"),
+                )
+            })?;
+
+        wal.write_all(WAL_MAGIC)
+            .and_then(|_| wal.write_all(&STORAGE_FORMAT_VERSION.to_le_bytes()))
+            .map_err(|e| {
+                GraphDbError::new(
+                    ErrorCode::IncompatibleFormat,
+                    format!("write wal header failed: {e}"),
+                )
+            })?;
 
         let record = WalCommitRecord {
             tx_id: tx_id.to_string(),
             snapshot: snapshot.clone(),
         };
-        let payload = serde_json::to_string(&record)
-            .map_err(|e| GraphDbError::new(ErrorCode::IncompatibleFormat, format!("serialize wal failed: {e}")))?;
-        wal.write_all(payload.as_bytes())
-            .and_then(|_| wal.write_all(b"\n"))
+        let payload = bincode::serialize(&record).map_err(|e| {
+            GraphDbError::new(
+                ErrorCode::IncompatibleFormat,
+                format!("serialize wal failed: {e}"),
+            )
+        })?;
+        wal.write_all(&(payload.len() as u64).to_le_bytes())
+            .and_then(|_| wal.write_all(&payload))
             .and_then(|_| wal.flush())
-            .map_err(|e| GraphDbError::new(ErrorCode::IncompatibleFormat, format!("append wal failed: {e}")))
+            .map_err(|e| {
+                GraphDbError::new(
+                    ErrorCode::IncompatibleFormat,
+                    format!("append wal failed: {e}"),
+                )
+            })
     }
+}
+
+fn encode_snapshot(snapshot: &PersistedSnapshot) -> Result<Vec<u8>, GraphDbError> {
+    let mut serialized = Vec::new();
+    serialized.extend_from_slice(SNAPSHOT_MAGIC);
+    serialized.extend_from_slice(&STORAGE_FORMAT_VERSION.to_le_bytes());
+    let payload = bincode::serialize(snapshot).map_err(|e| {
+        GraphDbError::new(
+            ErrorCode::IncompatibleFormat,
+            format!("serialize snapshot failed: {e}"),
+        )
+    })?;
+    serialized.extend_from_slice(&payload);
+    Ok(serialized)
+}
+
+fn decode_snapshot(raw: &[u8]) -> Result<PersistedSnapshot, GraphDbError> {
+    if raw.starts_with(SNAPSHOT_MAGIC) {
+        if raw.len() < SNAPSHOT_MAGIC.len() + std::mem::size_of::<u16>() {
+            return Err(GraphDbError::new(
+                ErrorCode::IncompatibleFormat,
+                "snapshot file is truncated",
+            ));
+        }
+        let version_start = SNAPSHOT_MAGIC.len();
+        let version_end = version_start + std::mem::size_of::<u16>();
+        let version = u16::from_le_bytes(
+            raw[version_start..version_end]
+                .try_into()
+                .expect("slice length"),
+        );
+        if version != STORAGE_FORMAT_VERSION {
+            return Err(GraphDbError::new(
+                ErrorCode::IncompatibleFormat,
+                format!(
+                    "snapshot format version mismatch: expected {}, got {}",
+                    STORAGE_FORMAT_VERSION, version
+                ),
+            ));
+        }
+        return bincode::deserialize(&raw[version_end..]).map_err(|e| {
+            GraphDbError::new(
+                ErrorCode::IncompatibleFormat,
+                format!("cannot parse db snapshot: {e}"),
+            )
+        });
+    }
+
+    serde_json::from_slice(raw).map_err(|e| {
+        GraphDbError::new(
+            ErrorCode::IncompatibleFormat,
+            format!("cannot parse db snapshot: {e}"),
+        )
+    })
+}
+
+fn decode_binary_wal(raw: &[u8]) -> Result<Option<PersistedSnapshot>, GraphDbError> {
+    if raw.len() < WAL_MAGIC.len() + std::mem::size_of::<u16>() {
+        return Err(GraphDbError::new(
+            ErrorCode::IncompatibleFormat,
+            "wal file is truncated",
+        ));
+    }
+    let version_start = WAL_MAGIC.len();
+    let version_end = version_start + std::mem::size_of::<u16>();
+    let version = u16::from_le_bytes(
+        raw[version_start..version_end]
+            .try_into()
+            .expect("slice length"),
+    );
+    if version != STORAGE_FORMAT_VERSION {
+        return Err(GraphDbError::new(
+            ErrorCode::IncompatibleFormat,
+            format!(
+                "wal format version mismatch: expected {}, got {}",
+                STORAGE_FORMAT_VERSION, version
+            ),
+        ));
+    }
+
+    let mut cursor = std::io::Cursor::new(&raw[version_end..]);
+    let mut latest = None;
+    loop {
+        let mut len_bytes = [0_u8; 8];
+        match cursor.read_exact(&mut len_bytes) {
+            Ok(()) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::UnexpectedEof => break,
+            Err(err) => {
+                return Err(GraphDbError::new(
+                    ErrorCode::IncompatibleFormat,
+                    format!("invalid wal entry length: {err}"),
+                ))
+            }
+        }
+
+        let len = u64::from_le_bytes(len_bytes) as usize;
+        let mut payload = vec![0_u8; len];
+        cursor.read_exact(&mut payload).map_err(|err| {
+            GraphDbError::new(
+                ErrorCode::IncompatibleFormat,
+                format!("truncated wal entry payload: {err}"),
+            )
+        })?;
+        let record: WalCommitRecord = bincode::deserialize(&payload).map_err(|e| {
+            GraphDbError::new(
+                ErrorCode::IncompatibleFormat,
+                format!("invalid wal entry: {e}"),
+            )
+        })?;
+        latest = Some(record.snapshot);
+    }
+
+    Ok(latest)
 }
 
 #[cfg(test)]
@@ -273,6 +457,8 @@ mod tests {
 
         let loaded = engine.load_graph().expect("load succeeds");
         assert_eq!(loaded.node_count(), 1);
+        let raw = fs::read(&path).expect("snapshot bytes");
+        assert!(raw.starts_with(SNAPSHOT_MAGIC));
         let _ = fs::remove_file(&path);
         let _ = fs::remove_file(path.with_extension("wal"));
     }
@@ -284,11 +470,33 @@ mod tests {
             "catalog_version": 999,
             "graph": InMemoryGraphStore::new()
         });
-        fs::write(&path, serde_json::to_string_pretty(&snapshot).expect("json"))
-            .expect("write");
+        fs::write(
+            &path,
+            serde_json::to_string_pretty(&snapshot).expect("json"),
+        )
+        .expect("write");
         let engine = StorageEngine::new(&path);
         let err = engine.load_graph().expect_err("must fail");
         assert_eq!(err.code, ErrorCode::IncompatibleFormat);
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn loads_legacy_json_snapshot() {
+        let path = temp_file("agdb-storage-legacy");
+        let legacy = serde_json::json!({
+            "catalog_version": CURRENT_CATALOG_VERSION,
+            "cluster_metadata": {
+                "catalog_schema_version": "v1",
+                "partitions": [],
+                "replicas": []
+            },
+            "graph": InMemoryGraphStore::new()
+        });
+        fs::write(&path, serde_json::to_string_pretty(&legacy).expect("json")).expect("write");
+        let engine = StorageEngine::new(&path);
+        let loaded = engine.load_graph().expect("load legacy snapshot");
+        assert_eq!(loaded.node_count(), 0);
         let _ = fs::remove_file(&path);
     }
 

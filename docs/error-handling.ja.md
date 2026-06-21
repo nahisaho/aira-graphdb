@@ -12,11 +12,12 @@ spec/contracts/agdb-error-codes.v1.0.0.json
 
 | カテゴリ | 例 | 再試行の要否 |
 |----------|----|----|
-| **クライアント入力** | `INVALID_PARAMETER`, `PROTOCOL_VERSION_MISMATCH` | いいえ（入力を修正） |
-| **一時的障害** | `IO_FAILURE`, `TIMEOUT`, `LOCK_CONFLICT` | はい（backoff付き） |
-| **リソース枯渇** | `OUT_OF_MEMORY`, `STORAGE_QUOTA_EXCEEDED` | コンテキスト次第 |
-| **データ整合性** | `REFERENTIAL_INTEGRITY_VIOLATION`, `DETERMINISTIC_CONFLICT` | いいえ（データを調査） |
-| **内部エラー** | `INTERNAL_BUG`, `PANIC_DETECTED` | エスカレーション（報告） |
+| **プロトコル** | `PROTOCOL_VERSION_MISMATCH` | いいえ（クライアント/サーバー更新） |
+| **クエリ検証** | `UNSUPPORTED_FEATURE`, `INVALID_ARGUMENT`, `INVALID_TOP_K`, `INVALID_THRESHOLD`, `INVALID_CORPUS_ID`, `INVALID_NAMESPACE` | いいえ（要求を修正） |
+| **トランザクション競合** | `RETRYABLE_CONFLICT`, `WRITE_LOCK_CONFLICT` | はい（backoff付き） |
+| **ストレージ** | `INCOMPATIBLE_FORMAT` | いいえ（DB 修復/移行） |
+| **認証** | `AUTH_REQUIRED`, `AUTH_FAILED` | いいえ（再認証） |
+| **整合性** | `REFERENTIAL_INTEGRITY_VIOLATION` | いいえ（データを調査） |
 
 ## 2. 再試行戦略
 
@@ -28,18 +29,18 @@ async function executeWithRetry(fn, maxRetries = 3) {
     try {
       return await fn();
     } catch (error) {
-      const isRetryable = isRetryableError(error);
+      const code = error?.code;
+      const isRetryable = isRetryableError(code);
       if (!isRetryable || attempt === maxRetries - 1) throw error;
-      
-      const delayMs = Math.min(1000 * Math.pow(2, attempt), 30000);
+
+      const delayMs = Math.min(250 * Math.pow(2, attempt), 5000) + Math.floor(Math.random() * 100);
       await sleep(delayMs);
     }
   }
 }
 
-function isRetryableError(error) {
-  const code = error.errorCode;
-  return ['IO_FAILURE', 'TIMEOUT', 'LOCK_CONFLICT'].includes(code);
+function isRetryableError(code) {
+  return ['RETRYABLE_CONFLICT', 'WRITE_LOCK_CONFLICT'].includes(code);
 }
 
 function sleep(ms) {
@@ -50,7 +51,7 @@ function sleep(ms) {
 ### Python の例：
 
 ```python
-import time
+import asyncio
 import random
 
 async def execute_with_retry(fn, max_retries=3):
@@ -58,67 +59,74 @@ async def execute_with_retry(fn, max_retries=3):
         try:
             return await fn()
         except GraphDbError as error:
-            if not is_retryable(error) or attempt == max_retries - 1:
+            code = getattr(error, "code", None)
+            if not is_retryable(code) or attempt == max_retries - 1:
                 raise
-            delay_ms = min(1000 * (2 ** attempt) + random.randint(0, 100), 30000)
+            delay_ms = min(250 * (2 ** attempt) + random.randint(0, 100), 5000)
             await asyncio.sleep(delay_ms / 1000)
 
-def is_retryable(error):
-    return error.error_code in ['IO_FAILURE', 'TIMEOUT', 'LOCK_CONFLICT']
+def is_retryable(code):
+    return code in ['RETRYABLE_CONFLICT', 'WRITE_LOCK_CONFLICT']
 ```
+
+再試行は副作用がない操作に限定してください。副作用を伴う要求は、ワークフロー全体ではなくトランザクション境界で再試行するのが安全です。
 
 ## 3. 一般的なエラーシナリオと復旧
 
-### 3.1 接続失敗
+### 3.1 プロトコル不一致
 
-**症状**: native sidecar 接続時に繰り返し `IO_FAILURE` または `TIMEOUT` が発生。
-
-**復旧手順**:
-1. sidecar プロセス確認: `ps aux | grep aira-graphdb-native`
-2. sidecar リッスン確認: `netstat -tlnp | grep 7687`（TCP利用の場合）
-3. sidecar 起動ログ確認: `aira-graphdb-native.log` または stderr
-4. クラッシュ検出時: `<db>.native-audit.log` の `PROCESS_CRASH` エントリを確認
-5. 破損が疑われる場合: `rm <db>.json && restart` で新規 DB から再スタート
-
-### 3.2 トランザクション競合
-
-**症状**: 複数クライアントが同じコーパスを修正する際に `LOCK_CONFLICT` が発生。
+**症状**: ハンドシェイク時に `PROTOCOL_VERSION_MISMATCH` が発生。
 
 **復旧手順**:
-1. これは同一コーパスへの並行書込に対する期待動作です
-2. クライアント側 backoff を実装（前述の指数バックオフパターンを参照）
-3. 重要データの場合: `BEGIN_TX` → 操作 → `COMMIT_TX` で明示的トランザクション実行
-4. 並行クライアント数を削減または master-worker パターン採用を検討
+1. クライアントとサーバーが同じ契約バージョンを使っているか確認
+2. 契約更新後はクライアント SDK を再生成または更新
+3. リクエストを再送する前にハンドシェイクログを確認
 
-### 3.3 メモリ不足エラー
+### 3.2 トランザクション競合と書込ロック
 
-**症状**: 大規模グラフ処理時に `OUT_OF_MEMORY` が発生。
-
-**復旧手順**:
-1. 利用可能メモリ確認: `free -h`（Linux）または `vm_stat`（macOS）
-2. sidecar メモリ使用量監視: `ps -aux | grep aira-graphdb-native`
-3. バッチサイズ削減: `upsert_nodes([1000 nodes])` の代わり、ループで `upsert_nodes([100 nodes])` を実行
-4. システムメモリ増設またはデータを小規模コーパスに分割
-5. コンテナ実行の場合: Docker メモリ制限を確認
-
-### 3.4 データ整合性違反
-
-**症状**: ノード削除時に受信エッジがある場合、`REFERENTIAL_INTEGRITY_VIOLATION` が発生。
+**症状**: 同一データへの並行更新で `RETRYABLE_CONFLICT` または `WRITE_LOCK_CONFLICT` が発生。
 
 **復旧手順**:
-1. Cypher で `DELETE DETACH` を使用（関連エッジ自動削除）
-2. native RPC 利用時: 先に `delete_edges`（参照エッジ）、後に `delete_nodes`
-3. 監査ログで状況確認: `grep REFERENTIAL_INTEGRITY_VIOLATION <db>.audit.log`
+1. これは並行書込や古いトランザクション状態で想定される動作です
+2. 再試行するのは冪等な操作に限定し、指数バックオフとジッターを使う
+3. 書込トランザクションを短く保ち、ホットスポットでは同時ライター数を減らす
+4. 同じ要求が繰り返し失敗する場合はトランザクション範囲とロック所有者を確認
 
-### 3.5 プロトコルミスマッチ
+### 3.3 バリデーション失敗
 
-**症状**: クライアント接続時に `PROTOCOL_VERSION_MISMATCH` または `CANONICAL_TYPE_MISMATCH` が発生。
+**症状**: `INVALID_ARGUMENT`, `INVALID_TOP_K`, `INVALID_THRESHOLD`, `INVALID_CORPUS_ID`, `INVALID_NAMESPACE`。
 
 **復旧手順**:
-1. クライアント SDK とsidecar のバージョン確認（両者とも v0.1.1 以上）
-2. ハンドシェイク交換をログ確認（`AGDB_DEBUG=1` 有効化可能な場合）
-3. クライアントと sidecar を同じバージョンにアップグレード
-4. クライアント内のキャッシュ型マップ消去
+1. 要求ペイロードを修正して再送する（これらは再試行対象外）
+2. API 呼び出し前に `topK`, `threshold`, `corpusId`, `namespace` を検証
+3. SDK 側で事前検証し、サーバー到達前に失敗させる
+
+### 3.4 ストレージ形式不整合
+
+**症状**: DB ファイルの読み込み/復旧時に `INCOMPATIBLE_FORMAT` が発生。
+
+**復旧手順**:
+1. DB ファイルのバージョンと現在のランタイムバージョンを確認
+2. 互換スナップショットへ戻すか、ファイル形式を移行
+3. DB 状態を変えずに同じ open を再試行しない
+
+### 3.5 データ整合性違反
+
+**症状**: 連結データの削除/更新で `REFERENTIAL_INTEGRITY_VIOLATION` が発生。
+
+**復旧手順**:
+1. 依存するエッジを先に削除または更新
+2. ワークフローが許す場合は detach-style の削除操作を使用
+3. 再試行前にデータモデルを確認
+
+### 3.6 認証失敗
+
+**症状**: リクエスト実行時に `AUTH_REQUIRED` または `AUTH_FAILED` が発生。
+
+**復旧手順**:
+1. 再試行前に再認証
+2. トークンの署名、claims、時計ずれを確認
+3. auth ハンドシェイク成功後に要求が送られているか確認
 
 ## 4. 監視とアラート
 
@@ -130,9 +138,9 @@ def is_retryable(error):
 |----------|------|----------|
 | `PROCESS_CRASH` | 任意の発生 | 即座に調査 |
 | `AUTH_FAILED` | 1分間に >5 件 | JWT/TLS 問題確認 |
-| `IO_FAILURE` | 1分間に >10 件 | ディスク/ネットワーク確認 |
-| `LOCK_CONFLICT` | 1分間に >50 件 | 並行パターンを見直し |
-| `DETERMINISTIC_CONFLICT` | 1分間に >20 件 | データ競合を調査 |
+| `RETRYABLE_CONFLICT` | 1分間に >20 件 | トランザクションのホットスポット確認 |
+| `WRITE_LOCK_CONFLICT` | 1分間に >10 件 | ライター競合を確認 |
+| `INCOMPATIBLE_FORMAT` | 任意の発生 | ファイルバージョンを確認 / バックアップから復元 |
 
 ### 4.2 監視クエリ例（jq利用）:
 
@@ -155,16 +163,15 @@ grep PROCESS_CRASH <db>.native-audit.log | jq '.[] | {timestamp, signal, lastReq
 {
   "id": "req-123",
   "error": {
-    "code": "LOCK_CONFLICT",
-    "message": "Write lock held by another transaction",
+    "code": "RETRYABLE_CONFLICT",
+    "message": "Transaction conflict detected",
     "details": {
       "context": "corpus_id=corpus-1, nodeId=n-42",
-      "duration_ms": 5000,
       "transaction_id": "tx-456"
     },
     "suggestions": [
       "Retry with exponential backoff",
-      "Check transaction isolation levels"
+      "Reduce concurrent writers"
     ]
   }
 }
@@ -173,11 +180,11 @@ grep PROCESS_CRASH <db>.native-audit.log | jq '.[] | {timestamp, signal, lastReq
 ### エラーコンテキスト抽出（TypeScript）:
 
 ```typescript
-function extractErrorContext(error: GraphDbError) {
+function extractErrorContext(error: { code: string; message: string; details?: Record<string, string> }) {
   return {
     code: error.code,
     message: error.message,
-    isRetryable: isRetryableError(error),
+    isRetryable: isRetryableError(error.code),
     suggestedAction: getSuggestedAction(error.code),
     timestamp: new Date().toISOString(),
     context: error.details?.context
@@ -196,7 +203,7 @@ async fn test_retry_on_lock_conflict() {
     let result = execute_with_retry(|| {
         attempt_count += 1;
         if attempt_count < 2 {
-            Err(GraphDbError::LockConflict)
+            Err(GraphDbError::new(ErrorCode::RetryableConflict, "conflict"))
         } else {
             Ok(())
         }
@@ -208,7 +215,7 @@ async fn test_retry_on_lock_conflict() {
 #[tokio::test]
 async fn test_no_retry_on_client_error() {
     let result = execute_with_retry(|| {
-        Err(GraphDbError::InvalidParameter)
+        Err(GraphDbError::new(ErrorCode::InvalidTopK, "invalid topK"))
     }, 3).await;
     assert!(result.is_err());
 }

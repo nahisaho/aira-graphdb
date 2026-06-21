@@ -30,7 +30,7 @@ All events in `<db>.native-audit.log` follow this JSON structure:
 | `DETERMINISTIC_CONFLICT` | Conflict detected in write | Investigate concurrent updates |
 | `PROCESS_CRASH` | Sidecar exited abnormally | Check cause, restart |
 | `IO_FAILURE` | Read/write error | Check disk space, permissions |
-| `LOCK_CONFLICT` | Write lock contention | Review concurrent operations |
+| `WRITE_LOCK_CONFLICT` | Write lock contention | Review concurrent operations |
 
 ### 1.3 Filtering and searching logs
 
@@ -76,30 +76,30 @@ cat aira-graphdb-native.log | tail -50
 ```
 
 **Solutions**:
-1. Start sidecar: `cargo run --bin aira-graphdb-native -- --db /path/to/db.json`
+1. Start sidecar: `cargo run --bin aira-graphdb-native -- --db /path/to/db.db`
 2. Verify port is not in use: `lsof -i :7687`
 3. Check firewall: `sudo ufw status` (Linux)
 4. If crashed, check `<db>.native-audit.log` for `PROCESS_CRASH`
 
-### 2.2 Issue: "LOCK_CONFLICT" on every write
+### 2.2 Issue: "WRITE_LOCK_CONFLICT" on every write
 
 **Symptoms**:
 ```
-All write operations fail with LOCK_CONFLICT immediately
+All write operations fail with WRITE_LOCK_CONFLICT immediately
 ```
 
 **Diagnosis**:
 ```bash
 # Check for stuck transactions
-grep LOCK_CONFLICT <db>.native-audit.log | wc -l
+grep WRITE_LOCK_CONFLICT <db>.native-audit.log | wc -l
 
 # See if lock holder info is logged
-grep LOCK_CONFLICT <db>.native-audit.log | jq '.details'
+grep WRITE_LOCK_CONFLICT <db>.native-audit.log | jq '.details'
 ```
 
 **Solutions**:
 1. Check if another client is holding write lock: review concurrent clients
-2. Restart sidecar to clear stuck locks: `pkill aira-graphdb-native && restart`
+2. Restart the sidecar to clear stuck locks, then relaunch it with the standard startup command
 3. Reduce concurrent writers (expected at high concurrency)
 4. Split corpus if contention is inherent to workload
 
@@ -148,7 +148,7 @@ done
 grep OUT_OF_MEMORY <db>.native-audit.log | head
 
 # Profile heap
-valgrind --tool=massif ./target/release/aira-graphdb-native --db test.json
+valgrind --tool=massif ./target/release/aira-graphdb-native --db test.db
 ```
 
 **Solutions**:
@@ -185,7 +185,7 @@ journalctl -xe   # System event log
 4. Enable core dumps for debugging:
    ```bash
    ulimit -c unlimited
-   cargo run --bin aira-graphdb-native -- --db test.json
+   cargo run --bin aira-graphdb-native -- --db test.db
    ```
 
 ## 3. Debug mode
@@ -198,7 +198,7 @@ export AGDB_DEBUG=1
 export RUST_LOG=debug
 
 # Run sidecar with debug output
-cargo run --bin aira-graphdb-native -- --db test.json 2>&1 | tee debug.log
+cargo run --bin aira-graphdb-native -- --db test.db 2>&1 | tee debug.log
 ```
 
 Debug output includes:
@@ -253,11 +253,11 @@ jq 'select(.type == "QUERY_EXECUTED") | {query: .details.query, duration_ms: .de
 ### 4.2 Lock contention investigation
 
 ```bash
-# Find requests that hit LOCK_CONFLICT
-jq 'select(.type == "LOCK_CONFLICT") | .details.context' <db>.native-audit.log | sort | uniq -c
+# Find requests that hit WRITE_LOCK_CONFLICT
+jq 'select(.type == "WRITE_LOCK_CONFLICT") | .details.context' <db>.native-audit.log | sort | uniq -c
 
 # Identify which corpus has most contention
-jq 'select(.type == "LOCK_CONFLICT") | .details.context' <db>.native-audit.log | \
+jq 'select(.type == "WRITE_LOCK_CONFLICT") | .details.context' <db>.native-audit.log | \
   grep -o "corpus_id=[^,]*" | sort | uniq -c
 ```
 

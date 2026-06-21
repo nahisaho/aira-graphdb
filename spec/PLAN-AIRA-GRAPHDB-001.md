@@ -3,12 +3,12 @@
 | フィールド | 値 |
 |-----------|---|
 | **ID** | PLAN-AIRA-GRAPHDB-001 |
-| **バージョン** | 1.2 |
+| **バージョン** | 1.7 |
 | **ステータス** | Draft |
 | **作成日** | 2026-06-20 |
 | **更新日** | 2026-06-21 |
 | **要件参照** | `REQ-AIRA-GRAPHDB-001` |
-| **設計参照** | `DES-AIRA-GRAPHDB-001` |
+| **設計参照** | `DES-AIRA-GRAPHDB-001`, `DES-AGDB-004`, `DES-AGDB-006`, `DES-AGDB-014`, `DES-AGDB-016`, `DES-AGDB-017` |
 
 ## 1. 実行順序（DAG）
 
@@ -60,6 +60,20 @@ flowchart TD
 ```
 
 ## 2. タスク一覧
+
+### 2.0 Cypher 実装計画サマリ
+
+openCypher 9 の主要句 + APOC whitelist 実行を既存基盤に段階導入する。  
+最優先は parser/binder/planner/executor の順で意味保存を担保し、次に TCK 固定スナップショットと release-block gate を接続する。
+
+| フェーズ | 重点タスク | 目的 |
+|---|---|---|
+| Parse | TASK-AGDB-021 | openCypher 9 主要句を受理する |
+| Semantic | TASK-AGDB-022, TASK-AGDB-023 | スコープ・型・評価順序を固定する |
+| Execute | TASK-AGDB-024, TASK-AGDB-025, TASK-AGDB-048, TASK-AGDB-052 | 実行セマンティクスと CALL/APOC/Neo4j 互換契約を実装する |
+| Conformance | TASK-AGDB-019, TASK-AGDB-020, TASK-AGDB-026, TASK-AGDB-029, TASK-AGDB-030, TASK-AGDB-031, TASK-AGDB-032, TASK-AGDB-049, TASK-AGDB-053 | TCK/manifest/CI を固定する |
+| Protocol | TASK-AGDB-027 | APP_READY 境界を維持する |
+| Recovery | TASK-AGDB-028, TASK-AGDB-034, TASK-AGDB-050, TASK-AGDB-051 | 競合・監査・ランタイム継続性を保つ |
 
 ### TASK-AGDB-001: 不変仕様アーティファクト固定
 
@@ -450,6 +464,8 @@ flowchart TD
 | REQ-AGDB-019 | TASK-AGDB-035, 036, 037 |
 | REQ-AGDB-020 | TASK-AGDB-038, 039 |
 | REQ-AGDB-021 | TASK-AGDB-040, 041 |
+| REQ-AGDB-024 | TASK-AGDB-052, 053 |
+| REQ-AGDB-025 | TASK-AGDB-053 |
 | REQ-AGDB-NF-001 | TASK-AGDB-018 |
 | REQ-AGDB-NF-002 | TASK-AGDB-033 |
 
@@ -468,6 +484,8 @@ flowchart TD
 | DES-AGDB-009 | TASK-AGDB-035, 036, 037 |
 | DES-AGDB-010 | TASK-AGDB-038, 039 |
 | DES-AGDB-011 | TASK-AGDB-040, 041 |
+| DES-AGDB-016 | TASK-AGDB-052 |
+| DES-AGDB-017 | TASK-AGDB-053 |
 
 ## 4. Phase 3 品質ゲート結果（再検証中）
 
@@ -555,7 +573,7 @@ flowchart TD
 **パッケージ**: `spec/conformance`, `tests`  
 **種別**: test  
 **優先度**: P0  
-**依存**: なし  
+**依存**: TASK-AGDB-021, TASK-AGDB-022, TASK-AGDB-023, TASK-AGDB-024  
 **見積**: 1.5h
 
 **実装内容**:
@@ -576,7 +594,7 @@ flowchart TD
 **パッケージ**: `spec/contracts`, `tests`  
 **種別**: test  
 **優先度**: P0  
-**依存**: なし  
+**依存**: TASK-AGDB-021, TASK-AGDB-024, TASK-AGDB-025  
 **見積**: 1.5h
 
 **実装内容**:
@@ -601,7 +619,7 @@ flowchart TD
 **見積**: 2h
 
 **実装内容**:
-- `OPTIONAL MATCH`, `WITH`, `UNWIND`, `REMOVE`, `SKIP/LIMIT` を文法対応
+- `OPTIONAL MATCH`, `WITH`, `UNWIND`, `RETURN`, `ORDER BY`, `SKIP/LIMIT`, `REMOVE`, `DELETE`, `DETACH DELETE`, `CALL` を文法対応
 - 構文エラーを標準化エラーへ変換
 - `MERGE` 構文（on-create/on-match）をパース可能にする
 
@@ -609,7 +627,7 @@ flowchart TD
 - [ ] テストが書かれている（Red）
 - [ ] テストが通る（Green）
 - [ ] リファクタリング済み（Blue）
-- [ ] `OPTIONAL MATCH/WITH/UNWIND/MERGE/REMOVE/SKIP/LIMIT` が parser レベルで受理される
+- [ ] `OPTIONAL MATCH/WITH/UNWIND/RETURN/ORDER BY/SKIP/LIMIT/MERGE/REMOVE/DELETE/DETACH DELETE/CALL` が parser レベルで受理される
 
 ---
 
@@ -665,7 +683,7 @@ flowchart TD
 **見積**: 2h
 
 **実装内容**:
-- `OPTIONAL MATCH`, `UNWIND`, aggregation, `REMOVE` 実行器を実装
+- `OPTIONAL MATCH`, `UNWIND`, aggregation, `REMOVE`, `DELETE`, `DETACH DELETE` 実行器を実装
 - edge create/update の存在検証を統合
 - `MERGE` の on-create / on-match セマンティクスを実装
 
@@ -890,8 +908,8 @@ flowchart TD
 
 | REQ | 対応TASK (Delta) |
 |---|---|
-| REQ-AGDB-005 | TASK-AGDB-021, 022, 023, 024 |
-| REQ-AGDB-006 | TASK-AGDB-024, 025, 029, 031 |
+| REQ-AGDB-005 | TASK-AGDB-021, 022, 023, 024, 025, 029, 047, 048, 049 |
+| REQ-AGDB-006 | TASK-AGDB-021, 024, 025, 029, 031, 048, 049 |
 | REQ-AGDB-011 | TASK-AGDB-028 |
 | REQ-AGDB-015 | TASK-AGDB-027 |
 | REQ-AGDB-017 | TASK-AGDB-019, 029, 030, 032 |
@@ -1023,7 +1041,7 @@ flowchart TD
 **パッケージ**: `src/bin/aira-graphdb-native.rs`, `src/storage.rs`  
 **種別**: backend  
 **優先度**: P0  
-**依存**: なし  
+**依存**: TASK-AGDB-021, TASK-AGDB-022, TASK-AGDB-023, TASK-AGDB-024  
 **見積**: 2h
 
 **実装内容**:
@@ -1047,7 +1065,7 @@ flowchart TD
 **パッケージ**: `src/bin/aira-graphdb-native.rs`, `src/index.rs`  
 **種別**: backend  
 **優先度**: P0  
-**依存**: なし  
+**依存**: TASK-AGDB-021, TASK-AGDB-024, TASK-AGDB-025  
 **見積**: 2h
 
 **実装内容**:
@@ -1166,7 +1184,7 @@ flowchart TD
 **パッケージ**: `src/query.rs`, `src/graph.rs`, `tests/cypher_conformance.rs`  
 **種別**: backend  
 **優先度**: P0  
-**依存**: なし  
+**依存**: TASK-AGDB-021, TASK-AGDB-022, TASK-AGDB-023, TASK-AGDB-024  
 **見積**: 2h
 
 **実装内容**:
@@ -1191,7 +1209,7 @@ flowchart TD
 **パッケージ**: `src/query.rs`, `src/errors.rs`, `spec/contracts`  
 **種別**: backend  
 **優先度**: P0  
-**依存**: なし  
+**依存**: TASK-AGDB-021, TASK-AGDB-024, TASK-AGDB-025  
 **見積**: 2h
 
 **実装内容**:
@@ -1217,7 +1235,7 @@ flowchart TD
 **パッケージ**: `tests/cypher_conformance.rs`, `.github/workflows/conformance-gate.yml`, `spec/conformance`  
 **種別**: test  
 **優先度**: P0  
-**依存**: TASK-AGDB-047, TASK-AGDB-048  
+**依存**: TASK-AGDB-047, TASK-AGDB-048, TASK-AGDB-025, TASK-AGDB-031  
 **見積**: 1.5h
 
 **実装内容**:
@@ -1282,6 +1300,81 @@ flowchart TD
 - [ ] `SIGKILL` 注入時に `PROCESS_CRASH` が記録される
 - [ ] watchdog artifact の必須項目欠落時に CI が失敗する
 - [ ] crash reason が gate レポートへ統合される
+
+---
+
+### 9.2C Neo4j 互換 Cypher 拡張/ベースライン追加タスク（Gap Closure Delta）
+
+#### 9.2C.1 実行順序（DAG / Neo4j Compat Delta）
+
+```mermaid
+flowchart TD
+  T021[TASK-AGDB-021 Lexer/Parser full grammar]
+  T022[TASK-AGDB-022 Binder/Scope/Type checker]
+  T023[TASK-AGDB-023 Planner/Optimizer rule拡張]
+  T024[TASK-AGDB-024 Executor clause拡張]
+  T025[TASK-AGDB-025 Unsupported feature details契約]
+  T031[TASK-AGDB-031 Conformance set governance固定]
+  T052[TASK-AGDB-052 Neo4j compat dialect/feature guard]
+  T053[TASK-AGDB-053 Neo4j compat conformance gate]
+
+  T021 --> T052
+  T022 --> T052
+  T023 --> T052
+  T024 --> T052
+  T025 --> T052
+  T052 --> T053
+  T031 --> T053
+```
+
+#### 9.2C.2 タスク一覧（Neo4j Compat Delta）
+
+### TASK-AGDB-052: Neo4j compat dialect/feature guard 実装
+
+**トレーサビリティ**: REQ-AGDB-024 → DES-AGDB-016  
+**パッケージ**: `src/query.rs`, `spec/contracts`  
+**種別**: backend  
+**優先度**: P0  
+**依存**: TASK-AGDB-021, TASK-AGDB-022, TASK-AGDB-023, TASK-AGDB-024, TASK-AGDB-025  
+**見積**: 2h
+
+**実装内容**:
+- `CypherDialectResolver` と `Neo4jCompatFeatureGuard` を実装する
+- `CALL {}` / `EXISTS {}` / `UNION` / `FOREACH` / `CASE` / variable-length path / shortest path / schema-index 操作の baseline 判定を実装する
+- baseline 外機能の `UNSUPPORTED_FEATURE` と `details.unsupported_clause` を統一する
+
+**受入基準**:
+- [ ] テストが書かれている（Red）
+- [ ] テストが通る（Green）
+- [ ] リファクタリング済み（Blue）
+- [ ] `--dialect neo4j-compat` で compat manifest に列挙された機能のみ受理される
+- [ ] baseline 外の Neo4j 固有拡張は部分実行せず失敗する
+
+---
+
+### TASK-AGDB-053: Neo4j compat conformance gate 実装
+
+**トレーサビリティ**: REQ-AGDB-025 → DES-AGDB-017  
+**パッケージ**: `tests/cypher_neo4j_compat.rs`, `spec/conformance`, `.github/workflows`  
+**種別**: test  
+**優先度**: P0  
+**依存**: TASK-AGDB-031, TASK-AGDB-052  
+**見積**: 1.5h
+
+**実装内容**:
+- `spec/conformance/cypher-neo4j-compat-required.yaml` の baseline snapshot 検証を実装する
+- `covers_req` / `covers_acceptance` を feature 単位で検証する
+- 互換レポートと release-block 判定を CI に配線する
+
+**受入基準**:
+- [ ] テストが書かれている（Red）
+- [ ] テストが通る（Green）
+- [ ] リファクタリング済み（Blue）
+- [ ] baseline snapshot と実装の差分で CI が fail-fast する
+- [ ] 互換レポートが保存される
+- [ ] `covers_req` / `covers_acceptance` の欠落があれば gate が失敗する
+
+---
 
 ### TASK-AGDB-036: aira-synapse storage adapter bundle 実装
 

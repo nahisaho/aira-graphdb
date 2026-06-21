@@ -28,7 +28,7 @@ rustup component add llvm-tools-embedded
 
 Profile a single operation:
 ```bash
-cargo flamegraph --bin aira-graphdb-native --freq 99 -- --db test.json
+cargo flamegraph --bin aira-graphdb-native --freq 99 -- --db test.db
 ```
 
 This generates `flamegraph.svg` showing CPU time distribution.
@@ -38,15 +38,26 @@ This generates `flamegraph.svg` showing CPU time distribution.
 Use Valgrind on Linux:
 ```bash
 valgrind --tool=massif --massif-out-file=massif.out \
-  ./target/release/aira-graphdb-native --db test.json
+  ./target/release/aira-graphdb-native --db test.db
 ms_print massif.out
 ```
 
 Or use heaptrack:
 ```bash
-heaptrack ./target/release/aira-graphdb-native --db test.json
+heaptrack ./target/release/aira-graphdb-native --db test.db
 heaptrack_gui heaptrack.aira-graphdb-native.*.gz
 ```
+
+### 1.4 Native benchmark profiles
+
+The native perf gate uses fixed profiles and stores the result in `artifacts/native-bench-report.json`.
+
+| Profile | Workload | Baseline | Pass criteria |
+|---|---|---|---|
+| `P0-LATENCY-BASELINE` | Simple MATCH/RETURN on 100k nodes | `concurrency=1` | P95 ≤ 50ms |
+| `P0-NATIVE-READ` | `get_node/get_adjacent/vector_search(topK=10)/lexical_search(topK=10)` | 100k nodes / 100k vectors / `concurrency=8` / `warmup=60s` | 3 runs median: `get_node<=5ms`, `get_adjacent<=10ms`, `vector_search<=30ms`, `lexical_search<=30ms` |
+| `P0-NATIVE-WRITE` | `upsert_nodes/upsert_edges/vector_upsert` | 10,000 writes / batch 100 / `concurrency=8` | 3 runs median: write P95 ≤ 25ms and 10,000 writes ≤ 8,000ms |
+| `P0-NATIVE-SOAK-SMOKE` | Read/write mix + anomaly injection | 30 min | crash count = 0 and internal failure rate ≤ 0.1% |
 
 ## 2. Bottleneck identification
 
@@ -55,7 +66,7 @@ heaptrack_gui heaptrack.aira-graphdb-native.*.gz
 | Bottleneck | Symptom | Solution |
 |-----------|---------|----------|
 | **Network latency** | High `latency_p99_ms` with low CPU | Reduce RPC round trips, use batch operations |
-| **Lock contention** | High `LOCK_CONFLICT` errors | Reduce concurrent writers, use transactions |
+| **Lock contention** | High `WRITE_LOCK_CONFLICT` errors | Reduce concurrent writers, use transactions |
 | **Disk I/O** | High `IO_FAILURE` rate, slow sync | Move to faster storage, increase batch size |
 | **Memory pressure** | Increasing GC pauses | Reduce corpus size, split into shards |
 | **Parser overhead** | High CPU with moderate throughput | Use prepared statements (if supported) |
@@ -118,6 +129,10 @@ Benefits:
 - Faster recovery on crash
 - Reduces WAL replay time
 - Enables incremental backup
+
+**Storage format**:
+
+`aira-graphdb` now uses a compact binary snapshot/WAL format with legacy JSON compatibility. This reduces serialization overhead and disk usage compared with the previous pretty-printed JSON layout.
 
 **Document lifecycle**:
 
@@ -215,10 +230,10 @@ Run multiple sidecar instances behind a load balancer:
 
 ```bash
 # Instance 1
-cargo run --bin aira-graphdb-native -- --db /data/db-1.json
+cargo run --bin aira-graphdb-native -- --db /data/db-1.db
 
 # Instance 2
-cargo run --bin aira-graphdb-native -- --db /data/db-2.json
+cargo run --bin aira-graphdb-native -- --db /data/db-2.db
 ```
 
 Route by corpus hash:
@@ -257,6 +272,19 @@ pub struct SoakProfile {
 }
 ```
 
+### 5.3 Native benchmark thresholds
+
+The perf gate also reads these override values when tuning is needed:
+
+```bash
+AGDB_NATIVE_BENCH_GET_NODE_P95_MS=5
+AGDB_NATIVE_BENCH_GET_ADJ_P95_MS=10
+AGDB_NATIVE_BENCH_VECTOR_P95_MS=30
+AGDB_NATIVE_BENCH_LEXICAL_P95_MS=30
+AGDB_NATIVE_BENCH_WRITE_P95_MS=25
+AGDB_NATIVE_BENCH_WRITE_10K_MS=8000
+```
+
 ## 6. Monitoring optimization impact
 
 ### 6.1 Before/After comparison
@@ -288,6 +316,13 @@ Add this to CI to catch performance regressions:
     REGRESSION=$(awk 'NR==2{if($1 > baseline*1.1) print 1; else print 0}' baseline.txt current.txt)
     if [ $REGRESSION -eq 1 ]; then exit 1; fi
 ```
+
+### 6.3 Native benchmark report interpretation
+
+- `rounds` is `3` by default; the report uses the median of three runs
+- `thresholds_ms` shows the active perf gate limits
+- `metrics_ms` records the measured P95 values
+- `gate_pass=false` means the perf gate should block release
 
 ## 7. Common trade-offs
 

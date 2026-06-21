@@ -5,6 +5,7 @@ pub const TYPEMAP_SPEC_ID: &str = "AGDB-TYPEMAP-P0@1.0.0";
 pub const CYPHER_SPEC_ID: &str = "AGDB-CYPHER-P0-GRAMMAR@1.0.0";
 pub const ERROR_SPEC_ID: &str = "AGDB-ERROR-CODES@1.0.0";
 pub const OPENCYPHER9_SPEC_ID: &str = "AGDB-CYPHER-OPENCYPHER9@1.0.0";
+pub const NEO4J_COMPAT_SPEC_ID: &str = "agdb-cypher-neo4j-compat.v1.0.0";
 pub const APOC_MANIFEST_ID: &str = "apoc-procedure-manifest";
 
 #[derive(Debug, Deserialize)]
@@ -94,6 +95,25 @@ pub struct ApocErrorPolicy {
     pub partial_execution_forbidden: bool,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct Neo4jCompatManifestSpec {
+    pub manifest_id: String,
+    pub baseline_mode: String,
+    pub snapshot_ref: String,
+    pub required_feature_count: u64,
+    pub classified_feature_count: u64,
+    pub features: Vec<Neo4jCompatFeatureEntry>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Neo4jCompatFeatureEntry {
+    pub feature_id: String,
+    pub clause: String,
+    pub status: String,
+    pub covers_req: Vec<String>,
+    pub covers_acceptance: Vec<String>,
+}
+
 pub fn load_typemap_spec() -> TypeMapSpec {
     serde_json::from_str(include_str!("../spec/contracts/agdb-typemap-p0.v1.0.0.json"))
         .expect("typemap contract JSON must be valid")
@@ -125,6 +145,13 @@ pub fn load_apoc_procedure_manifest() -> ApocProcedureManifest {
         "../spec/contracts/apoc-procedure-manifest.v1.0.0.yaml"
     ))
     .expect("apoc procedure manifest YAML must be valid")
+}
+
+pub fn load_neo4j_compat_manifest() -> Neo4jCompatManifestSpec {
+    serde_json::from_str(include_str!(
+        "../spec/contracts/agdb-cypher-neo4j-compat.v1.0.0.json"
+    ))
+    .expect("neo4j compat manifest JSON must be valid")
 }
 
 pub fn build_tck_selector_map(spec: &OpenCypher9TckRequiredSpec) -> Result<HashMap<String, String>, String> {

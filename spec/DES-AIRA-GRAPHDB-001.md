@@ -3,11 +3,11 @@
 | フィールド | 値 |
 |-----------|---|
 | **ID** | DES-AIRA-GRAPHDB-001 |
-| **バージョン** | 1.4 |
+| **バージョン** | 1.7 |
 | **ステータス** | Draft |
 | **作成日** | 2026-06-20 |
 | **更新日** | 2026-06-21 |
-| **要件参照** | `spec/REQ-AIRA-GRAPHDB-001.md` (v1.8) |
+| **要件参照** | `spec/REQ-AIRA-GRAPHDB-001.md` (v1.9) |
 | **対象バージョン** | v0.2.0 |
 
 ## 0. 実行コンテキスト（受入試験）
@@ -19,7 +19,8 @@
 ## 1. 設計方針
 
 - Rust コアを単一実装とし、**Embedded** / **Server** の2モードを同一エンジンで提供する。
-- Cypher 実行は `AGDB-CYPHER-OPENCYPHER9@1.0.0`、`opencypher9-tck-required.yaml`、`opencypher9-required-tests.yaml` を同時に正とする。
+- Cypher 実行は `AGDB-CYPHER-OPENCYPHER9@1.0.0` を下位基準とし、Neo4j 互換ベースラインを含めてダイアレクト別に実装する。
+- 性能を優先し、Neo4j 互換は意味保存を損なわない範囲に限定する。
 - openCypher 9 準拠は **TCK 固定スナップショット** と **closed-world manifest** で機械検証する。
 - Python/Node SDK は同一 Wire Protocol と同一エラー契約を共有する。
 
@@ -220,6 +221,9 @@ export interface TypeMapResolver {
 
 **設計概要**:
 - Compiler は `Lexer -> Parser -> Binder -> SemanticChecker -> Planner -> Optimizer -> Executor` で構成する。
+- 主要句は `MATCH`, `OPTIONAL MATCH`, `WHERE`, `WITH`, `RETURN`, `ORDER BY`, `SKIP`, `LIMIT`, `CREATE`, `MERGE`, `DELETE`, `DETACH DELETE`, `SET`, `REMOVE`, `UNWIND`, `CALL` を含む。
+- Neo4j 互換ダイアレクトは `UNION`, `FOREACH`, `CASE`, `EXISTS {}` / `CALL {}` サブクエリ, variable-length path, shortest path, pattern comprehension, schema/index 操作を baseline feature manifest で制御する。
+- `WITH` のスコープ分離、別名解決、集約評価は SemanticChecker が担当し、Planner は再利用可能な形に正規化する。
 - `ORDER BY` なし read は multiset 同値、`ORDER BY` ありは順序同値で検証する。
 - 準拠範囲外機能は部分更新を許さず `UNSUPPORTED_FEATURE` を返す。
 - `UNSUPPORTED_FEATURE` 返却時は `details.unsupported_clause` に非対応句名を必須格納する。
@@ -238,6 +242,67 @@ export interface QueryExecutor {
 export interface QueryResult {
   columns: string[];
   rows: unknown[][];
+}
+
+export type CypherClauseKind =
+  | "MATCH"
+  | "OPTIONAL MATCH"
+  | "WHERE"
+  | "WITH"
+  | "RETURN"
+  | "ORDER BY"
+  | "SKIP"
+  | "LIMIT"
+  | "CREATE"
+  | "MERGE"
+  | "DELETE"
+  | "DETACH DELETE"
+  | "SET"
+  | "REMOVE"
+  | "UNWIND"
+  | "CALL"
+  | "UNION"
+  | "UNION ALL"
+  | "FOREACH"
+  | "CASE"
+  | "EXISTS"
+  | "LOAD CSV"
+  | "CALL SUBQUERY"
+  | "SHORTEST PATH"
+  | "PATTERN COMPREHENSION"
+  | "CREATE INDEX"
+  | "DROP INDEX"
+
+export interface ClauseSupportMatrix {
+  readClauses: CypherClauseKind[];
+  writeClauses: CypherClauseKind[];
+  callSubsets: string[];
+  unsupportedBehavior: "UNSUPPORTED_FEATURE";
+  partialExecutionForbidden: true;
+}
+
+export interface CypherNormalizationRule {
+  pattern: string;
+  normalizedForm: string;
+  preservesSemantics: true;
+}
+
+export type CypherDialect = "OPENCYPHER9" | "NEO4J_COMPAT";
+
+export interface CypherDialectResolver {
+  resolve(query: string): Promise<CypherDialect>;
+}
+
+export interface Neo4jCompatFeatureManifest {
+  manifestId: "agdb-cypher-neo4j-compat.v1.0.0";
+  baselineMode: "closed_world";
+  allowedFeatures: Array<{
+    featureId: string;
+    clause: string;
+    status: "required" | "unsupported";
+    coversReq: string[];
+    coversAcceptance: string[];
+  }>;
 }
 ```
 
@@ -645,6 +710,7 @@ export interface NativeRpcResilienceContractTest {
 - `CALL` 実行は `spec/contracts/apoc-procedure-manifest.v1.0.0.yaml` の `allowed_procedures` を正とするホワイトリスト方式で実装する。
 - 未許可 procedure は `UNSUPPORTED_FEATURE` を返し、部分実行禁止（`partial_execution_forbidden=true`）を適用する。
 - `side_effect=true` procedure（例: `apoc.refactor.rename.label`）は transaction atomic で実行し、失敗時は rollback を強制する。
+- `CALL` は引数検証、返却列スキーマ検証、procedure 名の正規化を行い、許可済みサブセット以外を実行しない。
 
 ```ts
 export interface RelationshipTraversalConformanceCase {
@@ -718,6 +784,70 @@ export interface WatchdogCrashReportArtifact {
 
 **CLI契約**: `cargo run -p aira-graphdb -- soak native-rw --hours 24 && cargo test --test native_watchdog -- --nocapture`
 
+---
+
+### DES-AGDB-016: Neo4j Compatible Cypher Dialect 設計
+
+**トレーサビリティ**: REQ-AGDB-024  
+**パッケージ**: `packages/aira-graphdb`, `spec/contracts`
+
+**設計概要**:
+- `CypherDialectResolver` で `OPENCYPHER9` と `NEO4J_COMPAT` を判定し、同一実装内でダイアレクトを切り替える。
+- Neo4j 互換ダイアレクトは `CALL {}` サブクエリ、`UNION`、`FOREACH`、`CASE`、`EXISTS {}`、variable-length path、shortest path、pattern comprehension、schema/index 操作を baseline feature manifest で制御する。
+- 互換範囲は `spec/contracts/agdb-cypher-neo4j-compat.v1.0.0.json` を正とし、未登録機能は部分実行禁止で `UNSUPPORTED_FEATURE` を返す。
+- `details.unsupported_clause` は非対応 feature の正規化名を必須保持し、CLI / SDK / Server で同一 payload を返す。
+- Neo4j 互換ダイアレクトの正規化は意味保存を最優先とし、性能劣化を招く正規化は許可しない。
+
+```ts
+export interface Neo4jCompatQueryContext {
+  dialect: CypherDialect;
+  featureManifest: Neo4jCompatFeatureManifest;
+  queryId?: string;
+}
+
+export interface Neo4jCompatFeatureGuard {
+  supports(featureId: string): boolean;
+  reject(featureId: string, clause: string): never;
+}
+
+export interface Neo4jCompatQueryPlanner {
+  plan(query: string, context: Neo4jCompatQueryContext): Promise<ExecutionPlan>;
+}
+```
+
+**CLI契約**: `cargo run -p aira-graphdb -- query --dialect neo4j-compat "<cypher>"`
+
+---
+
+### DES-AGDB-017: Neo4j 互換ベースライン & リリースゲート設計
+
+**トレーサビリティ**: REQ-AGDB-025  
+**パッケージ**: `packages/aira-graphdb`, `spec/conformance`, `spec/contracts`, `.github/workflows`
+
+**設計概要**:
+- `spec/conformance/cypher-neo4j-compat-required.yaml` は baseline snapshot とし、各 feature に `covers_req` / `covers_acceptance` を必須付与する。
+- baseline と実装の差分は CI で fail-fast し、release-block gate は互換テスト、マニフェスト、回帰レポートの3点一致を要求する。
+- report は `failedTestIds` と `failedFeatureIds` を分離し、feature 単位の原因特定とテスト単位の再実行を可能にする。
+- `Neo4jCompatFeatureManifest` と `ConformanceManifest` は同一 feature catalog を参照し、サポート状態の不整合を検出する。
+- `spec/contracts/agdb-cypher-neo4j-compat.v1.0.0.json` 生成物は release 時に不変化し、変更は新バージョンのみ許可する。
+
+```ts
+export interface Neo4jCompatConformanceReport {
+  manifestId: "cypher-neo4j-compat-required";
+  passRate: number;
+  failedTestIds: string[];
+  failedFeatureIds: string[];
+}
+
+export interface Neo4jCompatReleaseGate {
+  runCompatSuite(): Promise<Neo4jCompatConformanceReport>;
+  verifyManifestSync(): Promise<void>;
+  persistReport(report: Neo4jCompatConformanceReport): Promise<void>;
+}
+```
+
+**CLI契約**: `cargo test --test cypher_neo4j_compat -- --nocapture`
+
 ## 4. SOLID 適用
 
 - **SRP**: Runtime / Compiler / Executor / Storage / Auth / Conformance を責務分離。
@@ -728,6 +858,6 @@ export interface WatchdogCrashReportArtifact {
 
 ## 5. 実装境界（Phase 4 への受け渡し）
 
-- 先行固定: `AGDB-CYPHER-OPENCYPHER9@1.0.0`, `opencypher9-tck-required.yaml`, `AGDB-ERROR-CODES@1.0.0`
+- 先行固定: `AGDB-CYPHER-OPENCYPHER9@1.0.0`, `AGDB-CYPHER-NEO4J-COMPAT@1.0.0`, `opencypher9-tck-required.yaml`, `cypher-neo4j-compat-required.yaml`, `AGDB-ERROR-CODES@1.0.0`
 - コンパイラ系は Red→Green→Blue で句単位に段階導入する。
-- conformance gate を CI 必須ジョブとして実装完了条件に含める。
+- conformance gate を CI 必須ジョブとして実装完了条件に含め、openCypher 9 と Neo4j 互換ベースラインの両方を検証する。
