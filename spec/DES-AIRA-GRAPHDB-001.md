@@ -3,11 +3,11 @@
 | フィールド | 値 |
 |-----------|---|
 | **ID** | DES-AIRA-GRAPHDB-001 |
-| **バージョン** | 1.3 |
+| **バージョン** | 1.4 |
 | **ステータス** | Draft |
 | **作成日** | 2026-06-20 |
 | **更新日** | 2026-06-21 |
-| **要件参照** | `spec/REQ-AIRA-GRAPHDB-001.md` (v1.7) |
+| **要件参照** | `spec/REQ-AIRA-GRAPHDB-001.md` (v1.8) |
 | **対象バージョン** | v0.2.0 |
 
 ## 0. 実行コンテキスト（受入試験）
@@ -631,6 +631,92 @@ export interface NativeRpcResilienceContractTest {
 ```
 
 **CLI契約**: `cargo run -p aira-graphdb -- soak native-rw --hours 24 && cargo test --test native_rpc_resilience -- --nocapture`
+
+---
+
+### DES-AGDB-014: 関係走査 + CALL/APOC サブセット実行設計
+
+**トレーサビリティ**: REQ-AGDB-022, REQ-AGDB-023  
+**パッケージ**: `packages/aira-graphdb`, `spec/conformance`, `spec/contracts`
+
+**設計概要**:
+- 関係走査 `()-[]->()` / `()-[]-()` の実行を Planner/Executor に追加し、`MATCH/OPTIONAL MATCH/WHERE/WITH/RETURN` の句評価規則を固定する。
+- 関係走査の検証対象は `spec/conformance/rel-traversal-required.v1.0.0.yaml` で固定し、ordered query は `exact_order`、unordered query は `multiset` で比較する。
+- `CALL` 実行は `spec/contracts/apoc-procedure-manifest.v1.0.0.yaml` の `allowed_procedures` を正とするホワイトリスト方式で実装する。
+- 未許可 procedure は `UNSUPPORTED_FEATURE` を返し、部分実行禁止（`partial_execution_forbidden=true`）を適用する。
+- `side_effect=true` procedure（例: `apoc.refactor.rename.label`）は transaction atomic で実行し、失敗時は rollback を強制する。
+
+```ts
+export interface RelationshipTraversalConformanceCase {
+  id: string;
+  query: string;
+  assertion: "expected_rows" | "expected_rows_with_nulls" | "expected_order";
+}
+
+export interface CallProcedureManifest {
+  version: "1.0.0";
+  allowedProcedures: Array<{
+    name: string;
+    sideEffect: boolean;
+    failureCodes: string[];
+    atomicity?: "transaction_atomic";
+  }>;
+  errorPolicy: {
+    unlistedProcedure: "UNSUPPORTED_FEATURE";
+    partialExecutionForbidden: true;
+  };
+}
+```
+
+**CLI契約**: `cargo test --test cypher_conformance -- --nocapture && cargo run -p aira-graphdb -- query "CALL apoc.meta.schema()"`
+
+---
+
+### DES-AGDB-015: 実ランタイム Soak Runner + 外部 Watchdog 設計
+
+**トレーサビリティ**: REQ-AGDB-NF-006, REQ-AGDB-NF-007  
+**パッケージ**: `packages/aira-graphdb`, `.github/workflows`, `tests`
+
+**設計概要**:
+- soak 実行は実 sidecar プロセスを起動して read/write 混在負荷を送る runtime-runner とし、`P0-NATIVE-SOAK-SMOKE`（30分）/`P0-NATIVE-SOAK`（24h）を eventType で切替える。
+- watchdog は sidecar を別プロセスで監視し、`SIGKILL` 等の in-process hook 非捕捉終了も `PROCESS_CRASH` として監査ログへ記録する。
+- crash 監査ログ必須項目は `errorCode,timestamp,processExitCode,signal,lastRequestId,uptimeSec,cause` に固定する。
+- quality gate は crash count と internal failure rate を判定し、監査ログ必須項目欠落時は fail する。
+- 出力artifactは `artifacts/soak-summary.json` と `artifacts/watchdog-crash-report.json` を正とし、`soak-summary.json` に `profile,durationMinutes,totalRequests,internalFailureRate,crashCount`、`watchdog-crash-report.json` に `events[]`（`PROCESS_CRASH` 必須項目）を固定する。
+- gate 判定式は `crashCount == 0 AND internalFailureRate <= 0.001 AND requiredFieldsValid == true` とし、eventType ごとに `pull_request -> P0-NATIVE-SOAK-SMOKE`、`schedule/release -> P0-NATIVE-SOAK` を適用する。
+
+```ts
+export interface RuntimeSoakRunnerConfig {
+  profile: "P0-NATIVE-SOAK-SMOKE" | "P0-NATIVE-SOAK";
+  durationMinutes: 30 | 1440;
+  targetProcess: "aira-graphdb-native";
+}
+
+export interface ExternalWatchdogCrashEvent {
+  errorCode: "PROCESS_CRASH";
+  timestamp: string;
+  processExitCode: number | null;
+  signal: string | null;
+  lastRequestId: string | null;
+  uptimeSec: number;
+  cause: string | null;
+}
+
+export interface SoakSummaryArtifact {
+  profile: "P0-NATIVE-SOAK-SMOKE" | "P0-NATIVE-SOAK";
+  durationMinutes: 30 | 1440;
+  totalRequests: number;
+  internalFailureRate: number;
+  crashCount: number;
+  requiredFieldsValid: boolean;
+}
+
+export interface WatchdogCrashReportArtifact {
+  events: ExternalWatchdogCrashEvent[];
+}
+```
+
+**CLI契約**: `cargo run -p aira-graphdb -- soak native-rw --hours 24 && cargo test --test native_watchdog -- --nocapture`
 
 ## 4. SOLID 適用
 

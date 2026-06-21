@@ -120,6 +120,7 @@ Run native contract/perf/soak checks locally:
 cargo test --test native_rpc_resilience --quiet
 cargo test --test native_perf_gate --quiet
 AGDB_NATIVE_SOAK_PROFILE=P0-NATIVE-SOAK-SMOKE cargo test --test native_soak_gate --quiet
+cargo test --test native_watchdog --quiet
 ```
 
 For crash forensics verification (includes forced panic contract case):

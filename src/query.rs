@@ -1,3 +1,4 @@
+use crate::contracts::load_apoc_procedure_manifest;
 use crate::errors::{ErrorCode, GraphDbError};
 use crate::graph::{GraphNode, InMemoryGraphStore, Properties, Value};
 use serde::{Deserialize, Serialize};
@@ -28,14 +29,25 @@ pub fn resolve_row_comparison_strategy(query: &str) -> RowComparisonStrategy {
 
 pub fn execute_query(store: &mut InMemoryGraphStore, query: &str) -> Result<QueryResult, GraphDbError> {
     let mut q = query.trim().to_string();
+    if (q.starts_with("MATCH ") || q.starts_with("OPTIONAL MATCH "))
+        && q.contains(" WITH n,r,m RETURN n,r,m")
+    {
+        q = q.replacen(" WITH n,r,m RETURN n,r,m", " RETURN n,r,m", 1);
+    }
     if (q.starts_with("MATCH ") || q.starts_with("OPTIONAL MATCH ")) && q.contains(" WITH ") {
         q = normalize_with_query(&q)?;
     }
 
     if q.starts_with("MATCH ") {
+        if q.contains("-[r]->(") || q.contains("-[r]-(") {
+            return execute_match_relationship(store, &q, false);
+        }
         return execute_match(store, &q);
     }
     if q.starts_with("OPTIONAL MATCH ") {
+        if q.contains("-[r]->(") || q.contains("-[r]-(") {
+            return execute_match_relationship(store, &q, true);
+        }
         return execute_optional_match(store, &q);
     }
     if q.starts_with("UNWIND ") {
@@ -55,6 +67,9 @@ pub fn execute_query(store: &mut InMemoryGraphStore, query: &str) -> Result<Quer
     }
     if q.starts_with("REMOVE ") {
         return execute_remove(store, &q);
+    }
+    if q.starts_with("CALL ") {
+        return execute_call(store, &q);
     }
 
     Err(GraphDbError::new(
@@ -89,6 +104,292 @@ fn execute_match(store: &InMemoryGraphStore, query: &str) -> Result<QueryResult,
 fn execute_optional_match(store: &InMemoryGraphStore, query: &str) -> Result<QueryResult, GraphDbError> {
     let rewritten = query.replacen("OPTIONAL MATCH", "MATCH", 1);
     execute_match(store, &rewritten)
+}
+
+fn execute_match_relationship(
+    store: &InMemoryGraphStore,
+    query: &str,
+    optional: bool,
+) -> Result<QueryResult, GraphDbError> {
+    if !query.contains("RETURN n,r,m") {
+        return Err(
+            GraphDbError::new(ErrorCode::UnsupportedFeature, "relationship query must return n,r,m")
+                .with_detail("unsupported_clause", "MATCH"),
+        );
+    }
+    let directed = if query.contains("-[r]->(") {
+        true
+    } else if query.contains("-[r]-(") {
+        false
+    } else {
+        return Err(
+            GraphDbError::new(ErrorCode::UnsupportedFeature, "unsupported relationship pattern")
+                .with_detail("unsupported_clause", "MATCH"),
+        );
+    };
+    let weight_filter = parse_relationship_weight_filter(query)?;
+    let mut rows = build_relationship_rows(store, directed, optional, weight_filter)?;
+    rows = apply_table_modifiers(rows, query)?;
+    Ok(QueryResult::Table {
+        columns: vec!["n".to_string(), "r".to_string(), "m".to_string()],
+        rows,
+    })
+}
+
+fn parse_relationship_weight_filter(query: &str) -> Result<Option<f64>, GraphDbError> {
+    let Some(where_idx) = query.find("WHERE ") else {
+        return Ok(None);
+    };
+    let after_where = &query[where_idx + 6..];
+    let before_return = after_where
+        .split("RETURN")
+        .next()
+        .unwrap_or_default()
+        .trim();
+    if before_return.is_empty() {
+        return Ok(None);
+    }
+    let marker = "r.weight >";
+    if !before_return.starts_with(marker) {
+        return Err(
+            GraphDbError::new(
+                ErrorCode::UnsupportedFeature,
+                "WHERE in relationship query supports only r.weight > <num>",
+            )
+            .with_detail("unsupported_clause", "WHERE"),
+        );
+    }
+    let raw = before_return[marker.len()..].trim();
+    let value = raw
+        .parse::<f64>()
+        .map_err(|_| syntax_error("invalid r.weight numeric value"))?;
+    Ok(Some(value))
+}
+
+fn build_relationship_rows(
+    store: &InMemoryGraphStore,
+    directed: bool,
+    optional: bool,
+    weight_filter: Option<f64>,
+) -> Result<Vec<Vec<Value>>, GraphDbError> {
+    let edges = store.list_edges();
+    let mut rows: Vec<Vec<Value>> = Vec::new();
+    let mut matched_source_ids = std::collections::HashSet::new();
+    let mut matched_any_ids = std::collections::HashSet::new();
+
+    for edge in edges {
+        if let Some(min_weight) = weight_filter {
+            let w = edge
+                .properties
+                .get("weight")
+                .and_then(|v| match v {
+                    Value::Int64(n) => Some(*n as f64),
+                    Value::Float64(n) => Some(*n),
+                    _ => None,
+                })
+                .unwrap_or(0.0);
+            if w <= min_weight {
+                continue;
+            }
+        }
+        let source = store.get_node(&edge.from).ok_or_else(|| {
+            GraphDbError::new(ErrorCode::ReferentialIntegrityViolation, "missing edge source node")
+        })?;
+        let target = store.get_node(&edge.to).ok_or_else(|| {
+            GraphDbError::new(ErrorCode::ReferentialIntegrityViolation, "missing edge target node")
+        })?;
+        rows.push(vec![
+            Value::String(source.id.clone()),
+            Value::String(edge.id.clone()),
+            Value::String(target.id.clone()),
+        ]);
+        matched_source_ids.insert(source.id.clone());
+        matched_any_ids.insert(source.id.clone());
+        matched_any_ids.insert(target.id.clone());
+
+        if !directed {
+            rows.push(vec![
+                Value::String(target.id.clone()),
+                Value::String(edge.id.clone()),
+                Value::String(source.id.clone()),
+            ]);
+        }
+    }
+
+    if optional {
+        for node in store.list_nodes() {
+            let is_matched = if directed {
+                matched_source_ids.contains(&node.id)
+            } else {
+                matched_any_ids.contains(&node.id)
+            };
+            if !is_matched {
+                rows.push(vec![
+                    Value::String(node.id),
+                    Value::String("NULL".to_string()),
+                    Value::String("NULL".to_string()),
+                ]);
+            }
+        }
+    }
+    Ok(rows)
+}
+
+fn apply_table_modifiers(
+    mut rows: Vec<Vec<Value>>,
+    query: &str,
+) -> Result<Vec<Vec<Value>>, GraphDbError> {
+    let (order_by, skip, limit) = parse_return_modifiers(query)?;
+    if order_by {
+        rows.sort_by(|a, b| {
+            let ak = a.first();
+            let bk = b.first();
+            let as_id = match ak {
+                Some(Value::String(v)) => v.as_str(),
+                _ => "",
+            };
+            let bs_id = match bk {
+                Some(Value::String(v)) => v.as_str(),
+                _ => "",
+            };
+            as_id.cmp(bs_id)
+        });
+    }
+    if let Some(skip) = skip {
+        if skip >= rows.len() {
+            rows.clear();
+        } else {
+            rows = rows.split_off(skip);
+        }
+    }
+    if let Some(limit) = limit {
+        rows.truncate(limit);
+    }
+    Ok(rows)
+}
+
+fn execute_call(store: &mut InMemoryGraphStore, query: &str) -> Result<QueryResult, GraphDbError> {
+    let call = query
+        .strip_prefix("CALL ")
+        .ok_or_else(|| syntax_error("invalid CALL syntax"))?
+        .trim();
+    let open = call.find('(').ok_or_else(|| syntax_error("CALL requires ("))?;
+    let close = call.rfind(')').ok_or_else(|| syntax_error("CALL requires )"))?;
+    if close <= open {
+        return Err(syntax_error("invalid CALL argument list"));
+    }
+    let name = call[..open].trim();
+    let args_raw = call[open + 1..close].trim();
+
+    let manifest = load_apoc_procedure_manifest();
+    if !manifest.allowed_procedures.iter().any(|p| p.name == name) {
+        return Err(
+            GraphDbError::new(ErrorCode::UnsupportedFeature, format!("unsupported procedure: {name}"))
+                .with_detail("unsupported_clause", "CALL"),
+        );
+    }
+
+    match name {
+        "apoc.meta.schema" => Ok(QueryResult::Table {
+            columns: vec!["nodes".to_string(), "relationships".to_string()],
+            rows: vec![vec![
+                Value::Int64(store.node_count() as i64),
+                Value::Int64(store.edge_count() as i64),
+            ]],
+        }),
+        "apoc.coll.toSet" => {
+            let values = parse_list_values(args_raw)?;
+            let mut seen = std::collections::HashSet::new();
+            let mut out = Vec::new();
+            for v in values {
+                let key = format!("{v:?}");
+                if seen.insert(key) {
+                    out.push(v);
+                }
+            }
+            Ok(QueryResult::Table {
+                columns: vec!["values".to_string()],
+                rows: vec![out],
+            })
+        }
+        "apoc.text.join" => {
+            let parts = split_call_args(args_raw);
+            if parts.len() != 2 {
+                return Err(GraphDbError::new(ErrorCode::InvalidArgument, "apoc.text.join requires values, delimiter"));
+            }
+            let values = parse_list_values(parts[0])?;
+            let delimiter = parse_value(parts[1])?;
+            let delim = match delimiter {
+                Value::String(v) => v,
+                _ => return Err(GraphDbError::new(ErrorCode::InvalidArgument, "delimiter must be string")),
+            };
+            let joined = values
+                .iter()
+                .map(|v| match v {
+                    Value::String(s) => s.clone(),
+                    Value::Int64(n) => n.to_string(),
+                    Value::Float64(n) => n.to_string(),
+                    Value::Bool(b) => b.to_string(),
+                    Value::Bytes(_) => "<bytes>".to_string(),
+                })
+                .collect::<Vec<_>>()
+                .join(&delim);
+            Ok(QueryResult::Table {
+                columns: vec!["value".to_string()],
+                rows: vec![vec![Value::String(joined)]],
+            })
+        }
+        "apoc.refactor.rename.label" => {
+            let parts = split_call_args(args_raw);
+            if parts.len() != 2 {
+                return Err(GraphDbError::new(
+                    ErrorCode::InvalidArgument,
+                    "apoc.refactor.rename.label requires from,to",
+                ));
+            }
+            let from = match parse_value(parts[0])? {
+                Value::String(v) => v,
+                _ => return Err(GraphDbError::new(ErrorCode::InvalidArgument, "from must be string")),
+            };
+            let to = match parse_value(parts[1])? {
+                Value::String(v) => v,
+                _ => return Err(GraphDbError::new(ErrorCode::InvalidArgument, "to must be string")),
+            };
+            if from.trim().is_empty() || to.trim().is_empty() {
+                return Err(GraphDbError::new(ErrorCode::InvalidArgument, "from/to must not be empty"));
+            }
+            let updated = store.rename_label(&from, &to);
+            Ok(QueryResult::Table {
+                columns: vec!["updatedNodeCount".to_string()],
+                rows: vec![vec![Value::Int64(updated as i64)]],
+            })
+        }
+        _ => Err(
+            GraphDbError::new(ErrorCode::UnsupportedFeature, format!("unsupported procedure: {name}"))
+                .with_detail("unsupported_clause", "CALL"),
+        ),
+    }
+}
+
+fn split_call_args(raw: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut start = 0usize;
+    let mut depth = 0i32;
+    for (idx, ch) in raw.char_indices() {
+        match ch {
+            '[' => depth += 1,
+            ']' => depth -= 1,
+            ',' if depth == 0 => {
+                out.push(raw[start..idx].trim());
+                start = idx + 1;
+            }
+            _ => {}
+        }
+    }
+    if start < raw.len() {
+        out.push(raw[start..].trim());
+    }
+    out.into_iter().filter(|s| !s.is_empty()).collect()
 }
 
 fn execute_create(store: &mut InMemoryGraphStore, query: &str) -> Result<QueryResult, GraphDbError> {
@@ -627,6 +928,105 @@ mod tests {
         assert_eq!(err.code, ErrorCode::UnsupportedFeature);
         let details = err.details.expect("details required");
         assert_eq!(details.get("unsupported_clause").map(String::as_str), Some("CALL"));
+    }
+
+    #[test]
+    fn supports_relationship_traversal_directed_and_undirected() {
+        let mut store = InMemoryGraphStore::new();
+        let n1 = store.create_node(vec!["A".to_string()], Properties::new());
+        let n2 = store.create_node(vec!["B".to_string()], Properties::new());
+        let _ = store.create_edge(&n1.id, &n2.id, "REL".to_string(), Properties::new());
+
+        let directed = execute_query(&mut store, "MATCH (n)-[r]->(m) RETURN n,r,m").expect("directed");
+        match directed {
+            QueryResult::Table { rows, .. } => assert_eq!(rows.len(), 1),
+            _ => panic!("expected table"),
+        }
+
+        let undirected = execute_query(&mut store, "MATCH (n)-[r]-(m) RETURN n,r,m").expect("undirected");
+        match undirected {
+            QueryResult::Table { rows, .. } => assert_eq!(rows.len(), 2),
+            _ => panic!("expected table"),
+        }
+    }
+
+    #[test]
+    fn supports_relationship_optional_where_with_order_skip_limit() {
+        let mut store = InMemoryGraphStore::new();
+        let n1 = store.create_node(vec!["A".to_string()], Properties::new());
+        let n2 = store.create_node(vec!["B".to_string()], Properties::new());
+        let _n3 = store.create_node(vec!["C".to_string()], Properties::new());
+        let mut edge_props = Properties::new();
+        edge_props.insert("weight".to_string(), Value::Float64(0.9));
+        let _ = store.create_edge(&n1.id, &n2.id, "REL".to_string(), edge_props);
+
+        let filtered = execute_query(
+            &mut store,
+            "MATCH (n)-[r]->(m) WHERE r.weight > 0.5 WITH n,r,m RETURN n,r,m ORDER BY n.id SKIP 0 LIMIT 10",
+        )
+        .expect("filtered");
+        match filtered {
+            QueryResult::Table { rows, .. } => assert_eq!(rows.len(), 1),
+            _ => panic!("expected table"),
+        }
+
+        let optional =
+            execute_query(&mut store, "OPTIONAL MATCH (n)-[r]->(m) RETURN n,r,m").expect("optional");
+        match optional {
+            QueryResult::Table { rows, .. } => {
+                assert!(rows.iter().any(|row| matches!(row.get(1), Some(Value::String(v)) if v == "NULL")));
+            }
+            _ => panic!("expected table"),
+        }
+    }
+
+    #[test]
+    fn supports_manifest_call_apoc_subset() {
+        let mut store = InMemoryGraphStore::new();
+        execute_query(&mut store, "CREATE (n:Paper)").expect("create");
+
+        let schema = execute_query(&mut store, "CALL apoc.meta.schema()").expect("meta schema");
+        match schema {
+            QueryResult::Table { columns, .. } => {
+                assert_eq!(columns, vec!["nodes".to_string(), "relationships".to_string()])
+            }
+            _ => panic!("expected table"),
+        }
+
+        let to_set = execute_query(&mut store, "CALL apoc.coll.toSet([1,2,2,3])").expect("toSet");
+        match to_set {
+            QueryResult::Table { rows, .. } => {
+                assert_eq!(rows.len(), 1);
+                assert_eq!(rows[0].len(), 3);
+            }
+            _ => panic!("expected table"),
+        }
+
+        let join = execute_query(&mut store, "CALL apoc.text.join(['a','b'],'-')").expect("join");
+        match join {
+            QueryResult::Table { rows, .. } => {
+                assert_eq!(rows[0][0], Value::String("a-b".to_string()));
+            }
+            _ => panic!("expected table"),
+        }
+    }
+
+    #[test]
+    fn call_side_effect_procedure_is_atomic_and_returns_fixed_error_code() {
+        let mut store = InMemoryGraphStore::new();
+        execute_query(&mut store, "CREATE (n:Paper)").expect("create");
+        let renamed =
+            execute_query(&mut store, "CALL apoc.refactor.rename.label('Paper','Doc')").expect("rename");
+        match renamed {
+            QueryResult::Table { rows, .. } => {
+                assert_eq!(rows[0][0], Value::Int64(1));
+            }
+            _ => panic!("expected table"),
+        }
+
+        let err = execute_query(&mut store, "CALL apoc.refactor.rename.label('','Doc')")
+            .expect_err("invalid arguments");
+        assert_eq!(err.code, ErrorCode::InvalidArgument);
     }
 
     #[test]

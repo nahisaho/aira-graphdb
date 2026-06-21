@@ -174,6 +174,29 @@ impl InMemoryGraphStore {
     pub fn edge_count(&self) -> usize {
         self.edges.len()
     }
+
+    pub fn list_edges(&self) -> Vec<GraphEdge> {
+        let mut edges: Vec<GraphEdge> = self.edges.values().cloned().collect();
+        edges.sort_by(|a, b| a.id.cmp(&b.id));
+        edges
+    }
+
+    pub fn rename_label(&mut self, from: &str, to: &str) -> usize {
+        let mut updated = 0usize;
+        for node in self.nodes.values_mut() {
+            let mut changed = false;
+            for label in &mut node.labels {
+                if label == from {
+                    *label = to.to_string();
+                    changed = true;
+                }
+            }
+            if changed {
+                updated += 1;
+            }
+        }
+        updated
+    }
 }
 
 #[cfg(test)]

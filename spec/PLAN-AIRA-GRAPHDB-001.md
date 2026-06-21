@@ -901,6 +901,10 @@ flowchart TD
 | REQ-AGDB-NF-003 | TASK-AGDB-042, 044 |
 | REQ-AGDB-NF-004 | TASK-AGDB-043, 044 |
 | REQ-AGDB-NF-005 | TASK-AGDB-045, 046 |
+| REQ-AGDB-022 | TASK-AGDB-047, 049 |
+| REQ-AGDB-023 | TASK-AGDB-048, 049 |
+| REQ-AGDB-NF-006 | TASK-AGDB-050 |
+| REQ-AGDB-NF-007 | TASK-AGDB-051 |
 
 ## 8. Phase 4 追加タスク進捗（openCypher 9 フル対応）
 
@@ -1119,19 +1123,165 @@ flowchart TD
 **見積**: 2h
 
 **実装内容**:
-- 24h soak runner と watchdog crash detector を実装
+- baseline 用の soak/watchdog/audit quality gate scaffold/contract 判定ロジックを実装（runtime evidence 生成は TASK-050/051 が担当）
 - request異常イベント監査ログ（`errorCode/failureClass/requestId/timestamp`）を実装
-- crash 監査ログ（`errorCode/timestamp/processExitCode/signal/lastRequestId/uptimeSec`）を実装
+- crash 監査ログ契約（`errorCode/timestamp/processExitCode/signal/lastRequestId/uptimeSec/cause`）の検証ロジックを実装
 
 **受入基準**:
 - [ ] テストが書かれている（Red）
 - [ ] テストが通る（Green）
 - [ ] リファクタリング済み（Blue）
-- [ ] `pull_request` では `P0-NATIVE-SOAK-SMOKE`（30min）を必須とする
-- [ ] `schedule/release` では `P0-NATIVE-SOAK`（24h）を必須とする
-- [ ] `P0-NATIVE-SOAK` 24h で crash count 0 を満たす
-- [ ] 内部障害率（分子: `INTERNAL_BUG|IO_FAILURE|OOM|TIMEOUT`、分母: 全リクエスト）0.1% 以下
-- [ ] 監査ログ必須項目が全イベント種別で検証される
+- [ ] baseline gate で `crashCount/internalFailureRate/requiredFieldsValid` 判定ロジックが実装される
+- [ ] baseline gate は `artifacts/native-soak-report.json` / `artifacts/native-audit-events.json` / `artifacts/watchdog-crash-report.json` を入力に判定できる
+- [ ] crash 監査ログ必須項目（`errorCode,timestamp,processExitCode,signal,lastRequestId,uptimeSec,cause`）が検証される
+
+---
+
+### 9.2B 関係走査/CALL-APOC/実ランタイムSoak-Watchdog 強化タスク（Gap Closure Delta）
+
+#### 9.2B.1 実行順序（DAG / Gap Closure Delta）
+
+```mermaid
+flowchart TD
+  T046[TASK-AGDB-046 Baseline Soak/Watchdog gate]
+  T047[TASK-AGDB-047 Relationship traversal execution]
+  T048[TASK-AGDB-048 CALL/APOC subset execution]
+  T049[TASK-AGDB-049 Traversal+CALL conformance gate]
+  T050[TASK-AGDB-050 Real runtime soak runner]
+  T051[TASK-AGDB-051 External watchdog kill-level crash tracker]
+
+  T047 --> T049
+  T048 --> T049
+  T046 --> T050
+  T050 --> T051
+```
+
+**依存注記**: `TASK-AGDB-046` は baseline gate（既存）とし、NF-006/NF-007 の authoritative 実装は `TASK-AGDB-050/051` とする。
+
+#### 9.2B.2 タスク一覧（Gap Closure Delta）
+
+### TASK-AGDB-047: openCypher 関係走査パターン実装
+
+**トレーサビリティ**: REQ-AGDB-022 → DES-AGDB-014  
+**パッケージ**: `src/query.rs`, `src/graph.rs`, `tests/cypher_conformance.rs`  
+**種別**: backend  
+**優先度**: P0  
+**依存**: なし  
+**見積**: 2h
+
+**実装内容**:
+- `MATCH (n)-[r]->(m)` / `MATCH (n)-[r]-(m)` の単一ホップ関係走査を実装
+- `OPTIONAL MATCH` / `WHERE` / `WITH` / `ORDER BY` / `SKIP` / `LIMIT` 併用時の句評価規則を実装
+- `spec/conformance/rel-traversal-required.v1.0.0.yaml` のケースID実行を conformance suite に統合
+
+**受入基準**:
+- [ ] テストが書かれている（Red）
+- [ ] テストが通る（Green）
+- [ ] リファクタリング済み（Blue）
+- [ ] `OC9-REL-TRAV-001..006` が 100% PASS する
+- [ ] ordered query は `exact_order`、unordered query は `multiset` で一致する
+- [ ] `SKIP/LIMIT` 併用ケースで `expected_order` 一致を満たす
+- [ ] 関係走査の syntax/semantic エラー時に `AGDB-ERROR-CODES@1.0.0` の固定コードを返す
+
+---
+
+### TASK-AGDB-048: CALL/APOC サブセット実行基盤実装
+
+**トレーサビリティ**: REQ-AGDB-023 → DES-AGDB-014  
+**パッケージ**: `src/query.rs`, `src/errors.rs`, `spec/contracts`  
+**種別**: backend  
+**優先度**: P0  
+**依存**: なし  
+**見積**: 2h
+
+**実装内容**:
+- `CALL` 実行ルートと procedure dispatcher を実装
+- `spec/contracts/apoc-procedure-manifest.v1.0.0.yaml` を正とする whitelist 検証を実装
+- 未許可 procedure の `UNSUPPORTED_FEATURE` 固定返却と部分実行禁止を実装
+- `side_effect=true` procedure の transaction atomic 実行/失敗時 rollback を実装
+
+**受入基準**:
+- [ ] テストが書かれている（Red）
+- [ ] テストが通る（Green）
+- [ ] リファクタリング済み（Blue）
+- [ ] manifest 許可 procedure の必須ケースが 100% PASS する
+- [ ] 未許可 procedure は 100% `UNSUPPORTED_FEATURE` を返す
+- [ ] side-effect procedure 失敗時に部分更新 0 件を満たす
+- [ ] procedure 実行失敗時に manifest 定義の固定エラーコードを返す
+
+---
+
+### TASK-AGDB-049: Traversal/CALL-APOC conformance gate 拡張
+
+**トレーサビリティ**: REQ-AGDB-022, REQ-AGDB-023 → DES-AGDB-014  
+**パッケージ**: `tests/cypher_conformance.rs`, `.github/workflows/conformance-gate.yml`, `spec/conformance`  
+**種別**: test  
+**優先度**: P0  
+**依存**: TASK-AGDB-047, TASK-AGDB-048  
+**見積**: 1.5h
+
+**実装内容**:
+- 関係走査ケースと CALL/APOC サブセットケースを required conformance set へ追加
+- release-block 判定に新規 required case PASS 条件を統合
+- 失敗時にケースID単位の原因レポートを保存
+
+**受入基準**:
+- [ ] テストが書かれている（Red）
+- [ ] テストが通る（Green）
+- [ ] リファクタリング済み（Blue）
+- [ ] 新規 required case の PASS 率が 100% である
+- [ ] 失敗時に case ID / errorCode を含む artifact が保存される
+- [ ] 関係走査 + `SKIP/LIMIT` の required case を gate 対象へ含める
+
+---
+
+### TASK-AGDB-050: 実ランタイム 24h soak runner 実装
+
+**トレーサビリティ**: REQ-AGDB-NF-006 → DES-AGDB-015  
+**パッケージ**: `src/bin/aira-graphdb-native.rs`, `src/native_bench.rs`, `tests/native_soak_gate.rs`, `.github/workflows/conformance-gate.yml`  
+**種別**: infra  
+**優先度**: P0  
+**依存**: TASK-AGDB-046  
+**見積**: 2h
+
+**実装内容**:
+- 実 sidecar プロセス起動ベースの soak runner（smoke/full）を実装
+- `pull_request -> 30min`, `schedule/release -> 24h` の eventType ルーティングを固定
+- `artifacts/native-soak-report.json` に実行時間/総リクエスト/内部障害率/crash件数を出力
+
+**受入基準**:
+- [ ] テストが書かれている（Red）
+- [ ] テストが通る（Green）
+- [ ] リファクタリング済み（Blue）
+- [ ] smoke/full で実プロセス起動が確認できる
+- [ ] `artifacts/native-soak-report.json` の必須項目が検証される
+- [ ] `crashCount == 0` かつ `internalFailureRate <= 0.001` を満たす
+- [ ] `pull_request -> P0-NATIVE-SOAK-SMOKE(30min)` のルートを検証する
+- [ ] `schedule/release -> P0-NATIVE-SOAK(24h)` のルートを検証する
+
+---
+
+### TASK-AGDB-051: 外部 watchdog による kill-level crash 追跡実装
+
+**トレーサビリティ**: REQ-AGDB-NF-007 → DES-AGDB-015  
+**パッケージ**: `src/watchdog.rs`, `tests/native_watchdog.rs`, `.github/workflows/conformance-gate.yml`  
+**種別**: security  
+**優先度**: P0  
+**依存**: TASK-AGDB-050  
+**見積**: 2h
+
+**実装内容**:
+- sidecar 外部監視 watchdog を実装し、`SIGKILL` 等の強制終了を検知
+- `PROCESS_CRASH` イベントを `artifacts/watchdog-crash-report.json` と `artifacts/native-audit-events.json` に集約
+- `errorCode,timestamp,processExitCode,signal,lastRequestId,uptimeSec,cause` 必須項目検証を実装
+
+**受入基準**:
+- [ ] テストが書かれている（Red）
+- [ ] テストが通る（Green）
+- [ ] リファクタリング済み（Blue）
+- [ ] `SIGKILL` 注入時に `PROCESS_CRASH` が記録される
+- [ ] watchdog artifact の必須項目欠落時に CI が失敗する
+- [ ] crash reason が gate レポートへ統合される
 
 ### TASK-AGDB-036: aira-synapse storage adapter bundle 実装
 

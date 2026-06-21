@@ -1,0 +1,13 @@
+{
+  "events": [
+    {
+      "errorCode": "PROCESS_CRASH",
+      "timestamp": "1782010255808",
+      "processExitCode": null,
+      "signal": "SIG9",
+      "lastRequestId": "req-kill-1",
+      "uptimeSec": 0,
+      "cause": "killed by watchdog test"
+    }
+  ]
+}

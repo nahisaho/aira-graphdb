@@ -120,6 +120,7 @@ native 契約/perf/soak の確認コマンド:
 cargo test --test native_rpc_resilience --quiet
 cargo test --test native_perf_gate --quiet
 AGDB_NATIVE_SOAK_PROFILE=P0-NATIVE-SOAK-SMOKE cargo test --test native_soak_gate --quiet
+cargo test --test native_watchdog --quiet
 ```
 
 クラッシュ調査ログ検証（強制panicケース含む）:

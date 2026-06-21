@@ -107,6 +107,7 @@ PYTHONPATH=. python -m unittest discover -s tests -v
 - Native benchmark and soak profile helpers
 - Native request anomaly audit logging (`<db>.native-audit.log`)
 - Native runtime crash auto logging (`PROCESS_CRASH`)
+- External watchdog crash tracking for kill-level exits (`artifacts/watchdog-crash-report.json`)
 - Native CI quality gates:
   - perf gate artifact: `artifacts/native-bench-report.json`
   - soak gate artifact: `artifacts/native-soak-report.json`
@@ -132,3 +133,49 @@ When the native sidecar panics or exits abnormally, `<db>.native-audit.log` rece
 - `lastRequestId`
 - `uptimeSec`
 - `cause` (when available)
+
+Supported CALL/APOC subset is manifest-driven (`spec/contracts/apoc-procedure-manifest.v1.0.0.yaml`), and relationship traversal `()-[]->()/()-[]-()` is now covered by conformance cases.
+
+## Data registration and indexing (native JSON-RPC)
+
+Start sidecar:
+
+```bash
+cargo run --bin aira-graphdb-native -- --db /path/to/aira-graphdb-native.json
+```
+
+Register graph data:
+
+```json
+{"id":1,"method":"upsert_nodes","params":{"nodes":[{"nodeId":"n1","corpusId":"c1","layer":"paper","ref":{},"label":"Paper"}]}}
+{"id":2,"method":"upsert_edges","params":{"edges":[{"edgeId":"e1","corpusId":"c1","sourceNodeId":"n1","targetNodeId":"n1","relation":"SELF","weight":1.0}]}}
+```
+
+Register vector/lexical index data:
+
+```json
+{"id":3,"method":"vector_upsert","params":{"vectors":[{"id":"v1","corpusId":"c1","namespace":"default","values":[0.1,0.2,0.3],"metadata":{"documentId":"d1"}}]}}
+{"id":4,"method":"lexical_index_passages","params":{"passages":[{"passageId":"p1","corpusId":"c1","documentId":"d1","text":"graph database"}]}}
+```
+
+Query indexes:
+
+```json
+{"id":5,"method":"vector_search","params":{"corpusId":"c1","namespace":"default","queryVector":[0.1,0.2,0.3],"topK":10}}
+{"id":6,"method":"lexical_search","params":{"corpusId":"c1","query":"graph database","topK":10}}
+```
+
+Note: graph/vector/lexical in-memory indexes are refreshed automatically on upsert/delete. No separate `create index` command is required for the current native runtime.
+
+### Available queries (RPC methods)
+
+| Method | Description |
+|---|---|
+| `ping` | Health check |
+| `upsert_nodes`, `upsert_edges` | Insert/update graph nodes and edges |
+| `get_node`, `get_nodes`, `get_edges`, `get_adjacent` | Graph read operations |
+| `delete_nodes`, `delete_edges`, `delete_by_document`, `delete_by_corpus` | Graph delete operations |
+| `vector_upsert`, `vector_search`, `vector_delete_by_document` | Vector insert/search/delete |
+| `lexical_index_passages`, `lexical_search`, `lexical_delete_by_document` | Lexical index insert/search/delete |
+| `memory_save`, `memory_load`, `memory_save_checkpoint`, `memory_load_checkpoint`, `memory_validate_integrity` | Memory snapshot/checkpoint operations |
+| `projection_get_transitions`, `projection_get_dangling_nodes`, `projection_get_node_count` | Projection read operations |

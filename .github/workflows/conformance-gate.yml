@@ -38,6 +38,9 @@ jobs:
           fi
           AGDB_NATIVE_SOAK_PROFILE="$PROFILE" cargo test --test native_soak_gate --quiet
 
+      - name: Run native watchdog gate
+        run: cargo test --test native_watchdog --quiet
+
       - name: Validate release-block gate
         run: |
           python - <<'PY'
@@ -117,6 +120,31 @@ jobs:
           print("native soak gate passed")
           PY
 
+      - name: Validate native watchdog gate
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          report_path = Path("artifacts/watchdog-crash-report.json")
+          if not report_path.exists():
+              raise SystemExit("watchdog crash report missing")
+          report = json.loads(report_path.read_text(encoding="utf-8"))
+          events = report.get("events", [])
+          if not events:
+              raise SystemExit("watchdog events missing")
+          event = events[0]
+          required = ["errorCode", "timestamp", "lastRequestId", "uptimeSec", "cause"]
+          missing = [k for k in required if k not in event]
+          if missing:
+              raise SystemExit(f"watchdog crash event missing required fields: {missing}")
+          if event.get("errorCode") != "PROCESS_CRASH":
+              raise SystemExit(f"unexpected watchdog errorCode: {event.get('errorCode')}")
+          if event.get("processExitCode") is None and event.get("signal") is None:
+              raise SystemExit("watchdog crash event needs processExitCode or signal")
+          print("native watchdog gate passed")
+          PY
+
       - name: Upload conformance artifact
         uses: actions/upload-artifact@v4
         with:
@@ -140,3 +168,9 @@ jobs:
         with:
           name: native-audit-events
           path: artifacts/native-audit-events.json
+
+      - name: Upload watchdog crash artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: watchdog-crash-report
+          path: artifacts/watchdog-crash-report.json

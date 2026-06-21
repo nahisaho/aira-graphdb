@@ -1,0 +1,66 @@
+version: 1.0.0
+id: apoc-procedure-manifest
+status: stable
+description: Allowed CALL/APOC subset for aira-graphdb.
+id_semantics: procedure_id_equals_name
+
+allowed_procedures:
+  - name: apoc.meta.schema
+    category: apoc.meta
+    side_effect: false
+    args:
+      type: object
+      properties: {}
+      required: []
+    returns:
+      type: object
+      required: [nodes, relationships]
+    failure_codes: [REQUEST_EXECUTION_FAILED, UNSUPPORTED_FEATURE]
+  - name: apoc.coll.toSet
+    category: apoc.coll
+    side_effect: false
+    args:
+      type: object
+      properties:
+        values:
+          type: array
+      required: [values]
+    returns:
+      type: object
+      required: [values]
+    failure_codes: [REQUEST_EXECUTION_FAILED, UNSUPPORTED_FEATURE]
+  - name: apoc.text.join
+    category: apoc.text
+    side_effect: false
+    args:
+      type: object
+      properties:
+        values:
+          type: array
+        delimiter:
+          type: string
+      required: [values, delimiter]
+    returns:
+      type: object
+      required: [value]
+    failure_codes: [REQUEST_EXECUTION_FAILED, UNSUPPORTED_FEATURE]
+  - name: apoc.refactor.rename.label
+    category: apoc.refactor
+    side_effect: true
+    args:
+      type: object
+      properties:
+        from:
+          type: string
+        to:
+          type: string
+      required: [from, to]
+    returns:
+      type: object
+      required: [updatedNodeCount]
+    failure_codes: [REQUEST_EXECUTION_FAILED, UNSUPPORTED_FEATURE, RETRYABLE_CONFLICT]
+    atomicity: transaction_atomic
+
+error_policy:
+  unlisted_procedure: UNSUPPORTED_FEATURE
+  partial_execution_forbidden: true

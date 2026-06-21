@@ -108,6 +108,7 @@ PYTHONPATH=. python -m unittest discover -s tests -v
 - Native ベンチマーク/soak プロファイル補助
 - Native 異常系監査ログ（`<db>.native-audit.log`）
 - Native ランタイムクラッシュ自動監査（`PROCESS_CRASH`）
+- kill-level 終了を対象とする外部 watchdog クラッシュ追跡（`artifacts/watchdog-crash-report.json`）
 - Native CI 品質ゲート
   - perf artifact: `artifacts/native-bench-report.json`
   - soak artifact: `artifacts/native-soak-report.json`
@@ -133,3 +134,49 @@ native sidecar が panic/異常終了した場合、`<db>.native-audit.log` に 
 - `lastRequestId`
 - `uptimeSec`
 - `cause`（取得できる場合）
+
+`CALL/APOC` は `spec/contracts/apoc-procedure-manifest.v1.0.0.yaml` の許可集合で実行し、関係走査 `()-[]->()/()-[]-()` は conformance ケースで検証します。
+
+## データ登録とインデックス作成（native JSON-RPC）
+
+sidecar 起動:
+
+```bash
+cargo run --bin aira-graphdb-native -- --db /path/to/aira-graphdb-native.json
+```
+
+グラフデータ登録:
+
+```json
+{"id":1,"method":"upsert_nodes","params":{"nodes":[{"nodeId":"n1","corpusId":"c1","layer":"paper","ref":{},"label":"Paper"}]}}
+{"id":2,"method":"upsert_edges","params":{"edges":[{"edgeId":"e1","corpusId":"c1","sourceNodeId":"n1","targetNodeId":"n1","relation":"SELF","weight":1.0}]}}
+```
+
+ベクトル/全文インデックス用データ登録:
+
+```json
+{"id":3,"method":"vector_upsert","params":{"vectors":[{"id":"v1","corpusId":"c1","namespace":"default","values":[0.1,0.2,0.3],"metadata":{"documentId":"d1"}}]}}
+{"id":4,"method":"lexical_index_passages","params":{"passages":[{"passageId":"p1","corpusId":"c1","documentId":"d1","text":"graph database"}]}}
+```
+
+インデックス検索:
+
+```json
+{"id":5,"method":"vector_search","params":{"corpusId":"c1","namespace":"default","queryVector":[0.1,0.2,0.3],"topK":10}}
+{"id":6,"method":"lexical_search","params":{"corpusId":"c1","query":"graph database","topK":10}}
+```
+
+補足: 現在の native ランタイムでは、グラフ/ベクトル/全文のインメモリインデックスは upsert/delete 時に自動更新されるため、明示的な `create index` コマンドは不要です。
+
+### 利用可能クエリ（RPCメソッド）一覧
+
+| メソッド | 説明 |
+|---|---|
+| `ping` | ヘルスチェック |
+| `upsert_nodes`, `upsert_edges` | ノード/エッジ登録・更新 |
+| `get_node`, `get_nodes`, `get_edges`, `get_adjacent` | グラフ読み取り |
+| `delete_nodes`, `delete_edges`, `delete_by_document`, `delete_by_corpus` | グラフ削除 |
+| `vector_upsert`, `vector_search`, `vector_delete_by_document` | ベクトル登録・検索・削除 |
+| `lexical_index_passages`, `lexical_search`, `lexical_delete_by_document` | 全文インデックス登録・検索・削除 |
+| `memory_save`, `memory_load`, `memory_save_checkpoint`, `memory_load_checkpoint`, `memory_validate_integrity` | メモリ保存/復元/整合性確認 |
+| `projection_get_transitions`, `projection_get_dangling_nodes`, `projection_get_node_count` | 投影情報取得 |

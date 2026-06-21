@@ -1,190 +1,28 @@
 {
   "profile": "P0-NATIVE-SOAK-SMOKE",
   "durationMinutes": 30,
-  "totalRequests": 30000,
-  "internalFailureCount": 6,
-  "internalFailureRate": 0.0002,
+  "totalRequests": 243,
+  "internalFailureCount": 0,
+  "internalFailureRate": 0.0,
   "crashCount": 0,
   "requestAuditEvents": [
     {
       "errorCode": "INVALID_REQUEST_JSON",
       "failureClass": "CLIENT_INPUT",
-      "requestId": "req-invalid-json-1",
-      "timestamp": "1782000154865"
+      "requestId": "0",
+      "timestamp": "1782010255749"
     },
     {
       "errorCode": "UNSUPPORTED_FEATURE",
       "failureClass": "CLIENT_INPUT",
-      "requestId": "req-unknown-method-1",
-      "timestamp": "1782000154865"
-    },
-    {
-      "errorCode": "INVALID_REQUEST_JSON",
-      "failureClass": "CLIENT_INPUT",
-      "requestId": "req-invalid-json-2",
-      "timestamp": "1782000154865"
-    },
-    {
-      "errorCode": "UNSUPPORTED_FEATURE",
-      "failureClass": "CLIENT_INPUT",
-      "requestId": "req-unknown-method-2",
-      "timestamp": "1782000154865"
-    },
-    {
-      "errorCode": "INVALID_REQUEST_JSON",
-      "failureClass": "CLIENT_INPUT",
-      "requestId": "req-invalid-json-3",
-      "timestamp": "1782000154865"
-    },
-    {
-      "errorCode": "UNSUPPORTED_FEATURE",
-      "failureClass": "CLIENT_INPUT",
-      "requestId": "req-unknown-method-3",
-      "timestamp": "1782000154865"
-    },
-    {
-      "errorCode": "INVALID_REQUEST_JSON",
-      "failureClass": "CLIENT_INPUT",
-      "requestId": "req-invalid-json-4",
-      "timestamp": "1782000154865"
-    },
-    {
-      "errorCode": "UNSUPPORTED_FEATURE",
-      "failureClass": "CLIENT_INPUT",
-      "requestId": "req-unknown-method-4",
-      "timestamp": "1782000154865"
-    },
-    {
-      "errorCode": "INVALID_REQUEST_JSON",
-      "failureClass": "CLIENT_INPUT",
-      "requestId": "req-invalid-json-5",
-      "timestamp": "1782000154865"
-    },
-    {
-      "errorCode": "UNSUPPORTED_FEATURE",
-      "failureClass": "CLIENT_INPUT",
-      "requestId": "req-unknown-method-5",
-      "timestamp": "1782000154865"
-    },
-    {
-      "errorCode": "INVALID_REQUEST_JSON",
-      "failureClass": "CLIENT_INPUT",
-      "requestId": "req-invalid-json-6",
-      "timestamp": "1782000154865"
-    },
-    {
-      "errorCode": "UNSUPPORTED_FEATURE",
-      "failureClass": "CLIENT_INPUT",
-      "requestId": "req-unknown-method-6",
-      "timestamp": "1782000154865"
-    },
-    {
-      "errorCode": "INVALID_REQUEST_JSON",
-      "failureClass": "CLIENT_INPUT",
-      "requestId": "req-invalid-json-7",
-      "timestamp": "1782000154865"
-    },
-    {
-      "errorCode": "UNSUPPORTED_FEATURE",
-      "failureClass": "CLIENT_INPUT",
-      "requestId": "req-unknown-method-7",
-      "timestamp": "1782000154865"
-    },
-    {
-      "errorCode": "INVALID_REQUEST_JSON",
-      "failureClass": "CLIENT_INPUT",
-      "requestId": "req-invalid-json-8",
-      "timestamp": "1782000154865"
-    },
-    {
-      "errorCode": "UNSUPPORTED_FEATURE",
-      "failureClass": "CLIENT_INPUT",
-      "requestId": "req-unknown-method-8",
-      "timestamp": "1782000154865"
-    },
-    {
-      "errorCode": "INVALID_REQUEST_JSON",
-      "failureClass": "CLIENT_INPUT",
-      "requestId": "req-invalid-json-9",
-      "timestamp": "1782000154865"
-    },
-    {
-      "errorCode": "UNSUPPORTED_FEATURE",
-      "failureClass": "CLIENT_INPUT",
-      "requestId": "req-unknown-method-9",
-      "timestamp": "1782000154865"
-    },
-    {
-      "errorCode": "INVALID_REQUEST_JSON",
-      "failureClass": "CLIENT_INPUT",
-      "requestId": "req-invalid-json-10",
-      "timestamp": "1782000154865"
-    },
-    {
-      "errorCode": "UNSUPPORTED_FEATURE",
-      "failureClass": "CLIENT_INPUT",
-      "requestId": "req-unknown-method-10",
-      "timestamp": "1782000154865"
-    },
-    {
-      "errorCode": "INVALID_REQUEST_JSON",
-      "failureClass": "CLIENT_INPUT",
-      "requestId": "req-invalid-json-11",
-      "timestamp": "1782000154865"
-    },
-    {
-      "errorCode": "UNSUPPORTED_FEATURE",
-      "failureClass": "CLIENT_INPUT",
-      "requestId": "req-unknown-method-11",
-      "timestamp": "1782000154865"
-    },
-    {
-      "errorCode": "INVALID_REQUEST_JSON",
-      "failureClass": "CLIENT_INPUT",
-      "requestId": "req-invalid-json-12",
-      "timestamp": "1782000154865"
-    },
-    {
-      "errorCode": "UNSUPPORTED_FEATURE",
-      "failureClass": "CLIENT_INPUT",
-      "requestId": "req-unknown-method-12",
-      "timestamp": "1782000154865"
+      "requestId": "5001",
+      "timestamp": "1782010255749"
     },
     {
       "errorCode": "REQUEST_EXECUTION_FAILED",
-      "failureClass": "IO_FAILURE",
-      "requestId": "req-io-failure-1",
-      "timestamp": "1782000154865"
-    },
-    {
-      "errorCode": "REQUEST_EXECUTION_FAILED",
-      "failureClass": "IO_FAILURE",
-      "requestId": "req-io-failure-2",
-      "timestamp": "1782000154865"
-    },
-    {
-      "errorCode": "REQUEST_EXECUTION_FAILED",
-      "failureClass": "IO_FAILURE",
-      "requestId": "req-io-failure-3",
-      "timestamp": "1782000154865"
-    },
-    {
-      "errorCode": "REQUEST_EXECUTION_FAILED",
-      "failureClass": "IO_FAILURE",
-      "requestId": "req-io-failure-4",
-      "timestamp": "1782000154865"
-    },
-    {
-      "errorCode": "REQUEST_EXECUTION_FAILED",
-      "failureClass": "IO_FAILURE",
-      "requestId": "req-io-failure-5",
-      "timestamp": "1782000154865"
-    },
-    {
-      "errorCode": "REQUEST_EXECUTION_FAILED",
-      "failureClass": "IO_FAILURE",
-      "requestId": "req-io-failure-6",
-      "timestamp": "1782000154865"
+      "failureClass": "CLIENT_INPUT",
+      "requestId": "5002",
+      "timestamp": "1782010255749"
     }
   ],
   "crashAuditEvents": [],

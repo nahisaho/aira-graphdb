@@ -1,0 +1,44 @@
+version: 1.0.0
+id: rel-traversal-required
+description: Required relationship traversal conformance cases for openCypher execution.
+required_cases:
+  - id: OC9-REL-TRAV-001
+    query: "MATCH (n)-[r]->(m) RETURN n,r,m"
+    assertion: expected_rows
+    expected:
+      row_count: 12
+      row_fingerprint: "sha256:oc9-rel-trav-001"
+  - id: OC9-REL-TRAV-002
+    query: "MATCH (n)-[r]-(m) RETURN n,r,m"
+    assertion: expected_rows
+    expected:
+      row_count: 24
+      row_fingerprint: "sha256:oc9-rel-trav-002"
+  - id: OC9-REL-TRAV-003
+    query: "OPTIONAL MATCH (n)-[r]->(m) RETURN n,r,m"
+    assertion: expected_rows_with_nulls
+    expected:
+      row_count: 15
+      null_row_count: 3
+      row_fingerprint: "sha256:oc9-rel-trav-003"
+  - id: OC9-REL-TRAV-004
+    query: "MATCH (n)-[r]->(m) RETURN n,r,m ORDER BY n.id SKIP 1 LIMIT 5"
+    assertion: expected_order
+    expected:
+      row_count: 5
+      ordered_row_fingerprint: "sha256:oc9-rel-trav-004"
+  - id: OC9-REL-TRAV-005
+    query: "MATCH (n)-[r]->(m) WHERE r.weight > 0.5 RETURN n,r,m"
+    assertion: expected_rows
+    expected:
+      row_count: 7
+      row_fingerprint: "sha256:oc9-rel-trav-005"
+  - id: OC9-REL-TRAV-006
+    query: "MATCH (n)-[r]->(m) WITH n,r,m RETURN n,r,m ORDER BY n.id"
+    assertion: expected_order
+    expected:
+      row_count: 12
+      ordered_row_fingerprint: "sha256:oc9-rel-trav-006"
+comparison_rules:
+  ordered_queries: exact_order
+  unordered_queries: multiset

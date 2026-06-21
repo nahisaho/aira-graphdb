@@ -42,6 +42,54 @@ let _ = execute_query(&mut store, "MATCH (n:Paper) WITH n RETURN n ORDER BY n.id
 
 `APP_READY` 前のアプリ要求は `AUTH_REQUIRED` で拒否されます。
 
+### データ登録とインデックス作成（native JSON-RPC）
+
+sidecar 起動:
+
+```bash
+cargo run --bin aira-graphdb-native -- --db /path/to/aira-graphdb-native.json
+```
+
+ノード/エッジ登録:
+
+```json
+{"id":1,"method":"upsert_nodes","params":{"nodes":[{"nodeId":"n1","corpusId":"c1","layer":"paper","ref":{},"label":"Paper"}]}}
+{"id":2,"method":"upsert_edges","params":{"edges":[{"edgeId":"e1","corpusId":"c1","sourceNodeId":"n1","targetNodeId":"n1","relation":"SELF","weight":1.0}]}}
+```
+
+インデックス用データ登録:
+
+```json
+{"id":3,"method":"vector_upsert","params":{"vectors":[{"id":"v1","corpusId":"c1","namespace":"default","values":[0.1,0.2,0.3],"metadata":{"documentId":"d1"}}]}}
+{"id":4,"method":"lexical_index_passages","params":{"passages":[{"passageId":"p1","corpusId":"c1","documentId":"d1","text":"graph database"}]}}
+```
+
+検索:
+
+```json
+{"id":5,"method":"vector_search","params":{"corpusId":"c1","namespace":"default","queryVector":[0.1,0.2,0.3],"topK":10}}
+{"id":6,"method":"lexical_search","params":{"corpusId":"c1","query":"graph database","topK":10}}
+```
+
+現在の RPC では `create index` は独立メソッドではありません。グラフ/ベクトル/全文インデックスは upsert/delete 成功時に自動更新されます。
+
+### 利用可能クエリ（RPCメソッド）一覧
+
+| メソッド | 説明 |
+|---|---|
+| `ping` | ヘルスチェック（`{"pong":true}` を返す） |
+| `upsert_nodes` / `upsert_edges` | ノード/エッジを登録・更新 |
+| `get_node` / `get_nodes` | 単一ノード取得 / 条件付きノード一覧取得 |
+| `get_edges` / `get_adjacent` | エッジ一覧取得 / ノード隣接エッジ取得 |
+| `delete_nodes` / `delete_edges` | 指定ノード/エッジを削除 |
+| `delete_by_document` / `delete_by_corpus` | ドキュメント単位 / コーパス単位の一括削除 |
+| `vector_upsert` / `vector_search` / `vector_delete_by_document` | ベクトルデータ登録・検索・削除 |
+| `lexical_index_passages` / `lexical_search` / `lexical_delete_by_document` | 全文インデックス登録・検索・削除 |
+| `memory_save` / `memory_load` | メモリスナップショット保存・読込 |
+| `memory_save_checkpoint` / `memory_load_checkpoint` | チェックポイント保存・読込 |
+| `memory_validate_integrity` | メモリ整合性検証（現状は空配列を返す） |
+| `projection_get_transitions` / `projection_get_dangling_nodes` / `projection_get_node_count` | 投影情報（遷移/ダングリング/ノード数）の取得 |
+
 ## 3. Conformance レポート
 
 `build_and_persist_conformance_report` が以下を生成します。
@@ -115,8 +163,8 @@ artifacts/native-audit-events.json
 | `ORDER BY`, `SKIP`, `LIMIT` | 対応 | 行比較戦略を ordered/multiset で切替（`resolve_row_comparison_strategy`） |
 | `CREATE`, `MERGE`, `SET`, `REMOVE`, `DELETE`, `DETACH` | 対応（プロファイル範囲） | `MERGE` の on-create/on-match 実装済み |
 | `UNWIND` + 集約 | 対応 | `count/sum/avg/min/max/collect` |
-| 非対応拡張（`CALL`、vendor procedure、APOC） | 明示拒否 | `UNSUPPORTED_FEATURE` + `details.unsupported_clause` |
-| 関係走査パターン（`()-[]->()`） | 未対応 | 現行実行スコープ外 |
+| `CALL` + APOC サブセット（`apoc.meta.schema`, `apoc.coll.toSet`, `apoc.text.join`, `apoc.refactor.rename.label`） | 対応（manifest制御） | 許可集合は `spec/contracts/apoc-procedure-manifest.v1.0.0.yaml` で固定 |
+| 関係走査パターン（`()-[]->()`, `()-[]-()`） | 対応 | 単一ホップ走査 + `OPTIONAL MATCH/WHERE/WITH/ORDER BY/SKIP/LIMIT` 契約ケース |
 
 ## 7. aira-synapse との Storage Port 互換
 
@@ -164,3 +212,17 @@ cargo test --test native_rpc_resilience -- --nocapture
 ```
 
 同テストには、`PROCESS_CRASH` 自動監査を検証する強制panicケースも含まれます。
+
+## 9. 外部 watchdog によるクラッシュ追跡
+
+`SIGKILL` など kill-level の終了は外部 watchdog 経路で検知し、以下に保存します。
+
+```text
+artifacts/watchdog-crash-report.json
+```
+
+ローカル実行:
+
+```bash
+cargo test --test native_watchdog -- --nocapture
+```

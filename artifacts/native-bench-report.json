@@ -11,12 +11,12 @@
     "write_10k_total_ms": 8000.0
   },
   "metrics_ms": {
-    "get_node_p95_ms": 0.000847,
-    "get_adjacent_p95_ms": 0.0008139999999999999,
-    "vector_search_p95_ms": 0.226083,
-    "lexical_search_p95_ms": 0.234256,
-    "write_api_p95_ms": 0.039075,
-    "write_10k_total_ms": 3.205234
+    "get_node_p95_ms": 0.000879,
+    "get_adjacent_p95_ms": 0.000868,
+    "vector_search_p95_ms": 0.221557,
+    "lexical_search_p95_ms": 0.177261,
+    "write_api_p95_ms": 0.040878,
+    "write_10k_total_ms": 3.277339
   },
   "gate_pass": true
 }

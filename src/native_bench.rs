@@ -1,8 +1,9 @@
 use std::collections::HashMap;
 use std::fs::{self, File};
-use std::io;
+use std::io::{self, BufRead, BufReader, Write};
 use std::path::Path;
-use std::time::{Duration, Instant};
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -306,6 +307,13 @@ pub fn parse_native_soak_profile(value: &str) -> NativeSoakProfile {
 }
 
 pub fn run_native_soak_report(profile: NativeSoakProfile) -> NativeSoakReport {
+    if let Some(report) = run_native_soak_runtime_sample(profile) {
+        return report;
+    }
+    run_native_soak_report_synthetic(profile)
+}
+
+fn run_native_soak_report_synthetic(profile: NativeSoakProfile) -> NativeSoakReport {
     let duration_minutes = profile.duration_minutes();
     let total_requests = match profile {
         NativeSoakProfile::Smoke => 30_000u64,
@@ -376,6 +384,171 @@ pub fn run_native_soak_report(profile: NativeSoakProfile) -> NativeSoakReport {
         required_fields_valid,
         gate_pass,
     }
+}
+
+fn run_native_soak_runtime_sample(profile: NativeSoakProfile) -> Option<NativeSoakReport> {
+    let bin = native_sidecar_bin_path()?;
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()?
+        .as_nanos();
+    let db_path = std::env::temp_dir().join(format!("agdb-native-soak-{nanos}.json"));
+    let audit_path = db_path.with_extension("native-audit.log");
+
+    let mut child = Command::new(bin)
+        .arg("--db")
+        .arg(&db_path)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    let mut stdin = child.stdin.take()?;
+    let mut stdout = BufReader::new(child.stdout.take()?);
+
+    let sample_requests = match profile {
+        NativeSoakProfile::Smoke => 240u64,
+        NativeSoakProfile::Full => 960u64,
+    };
+    let mut sent = 0u64;
+
+    for i in 0..sample_requests {
+        let request = if i % 10 < 7 {
+            format!(r#"{{"id":{},"method":"get_node","params":{{"corpusId":"c1","nodeId":"n{}"}}}}"#, i + 1, i)
+        } else {
+            format!(
+                r#"{{"id":{},"method":"upsert_nodes","params":{{"nodes":[{{"nodeId":"n{}","corpusId":"c1","layer":"l","ref":{{}},"label":"L"}}]}}}}"#,
+                i + 1,
+                i
+            )
+        };
+        if stdin.write_all(request.as_bytes()).is_err()
+            || stdin.write_all(b"\n").is_err()
+            || stdin.flush().is_err()
+        {
+            break;
+        }
+        let mut line = String::new();
+        if stdout.read_line(&mut line).is_err() {
+            break;
+        }
+        sent += 1;
+    }
+
+    // anomaly injections
+    let _ = stdin.write_all(b"{\"id\":5000,\"method\":\"ping\"\n");
+    let _ = stdin.write_all(b"\n");
+    let _ = stdin.flush();
+    let mut _tmp = String::new();
+    let _ = stdout.read_line(&mut _tmp);
+    sent += 1;
+
+    let _ = stdin.write_all(br#"{"id":5001,"method":"unknown_method","params":{}}"#);
+    let _ = stdin.write_all(b"\n");
+    let _ = stdin.flush();
+    _tmp.clear();
+    let _ = stdout.read_line(&mut _tmp);
+    sent += 1;
+
+    let _ = stdin.write_all(br#"{"id":5002,"method":"upsert_nodes","params":{"nodes":[{"nodeId":10}]}}"#);
+    let _ = stdin.write_all(b"\n");
+    let _ = stdin.flush();
+    _tmp.clear();
+    let _ = stdout.read_line(&mut _tmp);
+    sent += 1;
+
+    drop(stdin);
+    let _ = child.wait();
+
+    let mut request_audit_events: Vec<NativeRequestAuditEvent> = Vec::new();
+    let mut crash_audit_events: Vec<NativeCrashAuditEvent> = Vec::new();
+    if let Ok(raw) = fs::read_to_string(&audit_path) {
+        for line in raw.lines().filter(|line| !line.trim().is_empty()) {
+            let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+                continue;
+            };
+            let error_code = value.get("errorCode").and_then(|v| v.as_str()).unwrap_or_default();
+            if error_code == "PROCESS_CRASH" {
+                crash_audit_events.push(NativeCrashAuditEvent {
+                    error_code: error_code.to_string(),
+                    timestamp: value
+                        .get("timestamp")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default()
+                        .to_string(),
+                    process_exit_code: value.get("processExitCode").and_then(|v| v.as_i64()).map(|v| v as i32),
+                    signal: value.get("signal").and_then(|v| v.as_str()).map(ToString::to_string),
+                    last_request_id: value.get("lastRequestId").and_then(|v| v.as_str()).map(ToString::to_string),
+                    uptime_sec: value.get("uptimeSec").and_then(|v| v.as_u64()).unwrap_or(0),
+                    cause: value.get("cause").and_then(|v| v.as_str()).map(ToString::to_string),
+                });
+            } else {
+                request_audit_events.push(NativeRequestAuditEvent {
+                    error_code: error_code.to_string(),
+                    failure_class: value
+                        .get("failureClass")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("CLIENT_INPUT")
+                        .to_string(),
+                    request_id: value
+                        .get("requestId")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default()
+                        .to_string(),
+                    timestamp: value
+                        .get("timestamp")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default()
+                        .to_string(),
+                });
+            }
+        }
+    }
+
+    let internal_failure_count = request_audit_events
+        .iter()
+        .filter(|e| e.error_code == "REQUEST_EXECUTION_FAILED" && is_internal_failure_class(&e.failure_class))
+        .count() as u64;
+    let crash_count = crash_audit_events.len() as u64;
+    let total_requests = sent.max(1);
+    let internal_failure_rate = internal_failure_count as f64 / total_requests as f64;
+
+    let request_fields_valid = request_audit_events
+        .iter()
+        .all(|event| validate_request_event_required_fields(event).is_ok());
+    let crash_fields_valid = crash_audit_events
+        .iter()
+        .all(|event| validate_crash_event_required_fields(event).is_ok());
+    let required_fields_valid = request_fields_valid && crash_fields_valid;
+    let gate_pass = crash_count == 0 && internal_failure_rate <= 0.001 && required_fields_valid;
+
+    let report = NativeSoakReport {
+        profile: profile.as_str().to_string(),
+        duration_minutes: profile.duration_minutes(),
+        total_requests,
+        internal_failure_count,
+        internal_failure_rate,
+        crash_count,
+        request_audit_events,
+        crash_audit_events,
+        required_fields_valid,
+        gate_pass,
+    };
+
+    let _ = fs::remove_file(&db_path);
+    let _ = fs::remove_file(db_path.with_extension("native-audit.log"));
+    Some(report)
+}
+
+fn native_sidecar_bin_path() -> Option<String> {
+    if let Ok(bin) = std::env::var("CARGO_BIN_EXE_aira-graphdb-native") {
+        return Some(bin);
+    }
+    let from_target = Path::new("target/debug/aira-graphdb-native");
+    if from_target.exists() {
+        return Some(from_target.to_string_lossy().to_string());
+    }
+    None
 }
 
 pub fn write_native_soak_report<P: AsRef<Path>>(report: &NativeSoakReport, path: P) -> io::Result<()> {

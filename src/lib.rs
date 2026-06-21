@@ -13,3 +13,4 @@ pub mod runtime;
 pub mod server;
 pub mod storage;
 pub mod tx;
+pub mod watchdog;

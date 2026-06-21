@@ -5,6 +5,7 @@ pub const TYPEMAP_SPEC_ID: &str = "AGDB-TYPEMAP-P0@1.0.0";
 pub const CYPHER_SPEC_ID: &str = "AGDB-CYPHER-P0-GRAMMAR@1.0.0";
 pub const ERROR_SPEC_ID: &str = "AGDB-ERROR-CODES@1.0.0";
 pub const OPENCYPHER9_SPEC_ID: &str = "AGDB-CYPHER-OPENCYPHER9@1.0.0";
+pub const APOC_MANIFEST_ID: &str = "apoc-procedure-manifest";
 
 #[derive(Debug, Deserialize)]
 pub struct TypeMapSpec {
@@ -70,6 +71,29 @@ pub struct TckSelectorEntry {
     pub selector: String,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct ApocProcedureManifest {
+    pub version: String,
+    pub id: String,
+    pub status: String,
+    pub id_semantics: String,
+    pub allowed_procedures: Vec<ApocProcedure>,
+    pub error_policy: ApocErrorPolicy,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ApocProcedure {
+    pub name: String,
+    pub side_effect: bool,
+    pub failure_codes: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ApocErrorPolicy {
+    pub unlisted_procedure: String,
+    pub partial_execution_forbidden: bool,
+}
+
 pub fn load_typemap_spec() -> TypeMapSpec {
     serde_json::from_str(include_str!("../spec/contracts/agdb-typemap-p0.v1.0.0.json"))
         .expect("typemap contract JSON must be valid")
@@ -94,6 +118,13 @@ pub fn load_opencypher9_tck_required_spec() -> OpenCypher9TckRequiredSpec {
         "../spec/conformance/opencypher9-tck-required.yaml"
     ))
     .expect("opencypher9 tck required YAML must be valid")
+}
+
+pub fn load_apoc_procedure_manifest() -> ApocProcedureManifest {
+    serde_yaml::from_str(include_str!(
+        "../spec/contracts/apoc-procedure-manifest.v1.0.0.yaml"
+    ))
+    .expect("apoc procedure manifest YAML must be valid")
 }
 
 pub fn build_tck_selector_map(spec: &OpenCypher9TckRequiredSpec) -> Result<HashMap<String, String>, String> {

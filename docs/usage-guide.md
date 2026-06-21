@@ -42,6 +42,54 @@ Execution boundary is strict: `CONNECTED -> TLS_OK -> AUTH_OK -> APP_READY`.
 
 Before `APP_READY`, application requests are rejected with `AUTH_REQUIRED`.
 
+### Data registration and indexing via native JSON-RPC
+
+Start sidecar:
+
+```bash
+cargo run --bin aira-graphdb-native -- --db /path/to/aira-graphdb-native.json
+```
+
+Register nodes/edges:
+
+```json
+{"id":1,"method":"upsert_nodes","params":{"nodes":[{"nodeId":"n1","corpusId":"c1","layer":"paper","ref":{},"label":"Paper"}]}}
+{"id":2,"method":"upsert_edges","params":{"edges":[{"edgeId":"e1","corpusId":"c1","sourceNodeId":"n1","targetNodeId":"n1","relation":"SELF","weight":1.0}]}}
+```
+
+Register index data:
+
+```json
+{"id":3,"method":"vector_upsert","params":{"vectors":[{"id":"v1","corpusId":"c1","namespace":"default","values":[0.1,0.2,0.3],"metadata":{"documentId":"d1"}}]}}
+{"id":4,"method":"lexical_index_passages","params":{"passages":[{"passageId":"p1","corpusId":"c1","documentId":"d1","text":"graph database"}]}}
+```
+
+Search:
+
+```json
+{"id":5,"method":"vector_search","params":{"corpusId":"c1","namespace":"default","queryVector":[0.1,0.2,0.3],"topK":10}}
+{"id":6,"method":"lexical_search","params":{"corpusId":"c1","query":"graph database","topK":10}}
+```
+
+`create index` is not a separate RPC today. In-memory graph/vector/lexical indexes are refreshed automatically when upsert/delete methods succeed.
+
+### Available queries (RPC methods)
+
+| Method | Description |
+|---|---|
+| `ping` | Health check (`{"pong":true}`) |
+| `upsert_nodes` / `upsert_edges` | Insert or update nodes/edges |
+| `get_node` / `get_nodes` | Fetch one node / list nodes with filters |
+| `get_edges` / `get_adjacent` | List edges / get adjacent edges for a node |
+| `delete_nodes` / `delete_edges` | Delete selected nodes/edges |
+| `delete_by_document` / `delete_by_corpus` | Bulk delete by document or corpus |
+| `vector_upsert` / `vector_search` / `vector_delete_by_document` | Vector insert-search-delete operations |
+| `lexical_index_passages` / `lexical_search` / `lexical_delete_by_document` | Lexical index insert-search-delete operations |
+| `memory_save` / `memory_load` | Save and load memory snapshots |
+| `memory_save_checkpoint` / `memory_load_checkpoint` | Save and load checkpoints |
+| `memory_validate_integrity` | Memory integrity check (currently returns an empty list) |
+| `projection_get_transitions` / `projection_get_dangling_nodes` / `projection_get_node_count` | Projection reads: transitions, dangling nodes, and node count |
+
 ## 3. Conformance Report
 
 `build_and_persist_conformance_report` writes:
@@ -115,8 +163,8 @@ artifacts/native-audit-events.json
 | `ORDER BY`, `SKIP`, `LIMIT` | Supported | Strategy switch: ordered vs multiset (`resolve_row_comparison_strategy`) |
 | `CREATE`, `MERGE`, `SET`, `REMOVE`, `DELETE`, `DETACH` | Supported (profile subset) | `MERGE` on-create/on-match semantics implemented |
 | `UNWIND` + aggregation | Supported | `count/sum/avg/min/max/collect` |
-| Unsupported extensions (`CALL`, vendor procedures, APOC) | Explicitly rejected | Returns `UNSUPPORTED_FEATURE` with `details.unsupported_clause` |
-| Relationship traversal pattern (`()-[]->()`) | Not supported yet | Out of current execution scope |
+| `CALL` + APOC subset (`apoc.meta.schema`, `apoc.coll.toSet`, `apoc.text.join`, `apoc.refactor.rename.label`) | Supported (manifest-based) | Allowed set is fixed by `spec/contracts/apoc-procedure-manifest.v1.0.0.yaml` |
+| Relationship traversal pattern (`()-[]->()`, `()-[]-()`) | Supported | Single-hop traversal with `OPTIONAL MATCH/WHERE/WITH/ORDER BY/SKIP/LIMIT` contract cases |
 
 ## 7. Storage Port Compatibility with aira-synapse
 
@@ -164,3 +212,17 @@ cargo test --test native_rpc_resilience -- --nocapture
 ```
 
 The same test suite also includes a forced panic scenario to verify automatic `PROCESS_CRASH` audit logging.
+
+## 9. External watchdog crash tracking
+
+Kill-level exits (e.g. SIGKILL) are tracked through the external watchdog path and persisted as:
+
+```text
+artifacts/watchdog-crash-report.json
+```
+
+Run locally:
+
+```bash
+cargo test --test native_watchdog -- --nocapture
+```
