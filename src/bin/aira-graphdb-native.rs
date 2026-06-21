@@ -9,6 +9,11 @@ use std::panic;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+use aira_graphdb::graph::{
+    InMemoryGraphStore, Properties, Value as GraphValue,
+};
+use aira_graphdb::query::{execute_query_with_dialect, CypherDialect};
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct GraphNode {
@@ -439,6 +444,53 @@ impl Server {
             message: format!("unsupported_method:{method}"),
             failure_class: Some("CLIENT_INPUT".to_string()),
         }
+    }
+
+    /// Build an InMemoryGraphStore from State for Cypher query execution.
+    /// Optionally filters by corpus_id.
+    fn build_cypher_store(&self, corpus_id: Option<&str>) -> InMemoryGraphStore {
+        let mut store = InMemoryGraphStore::new();
+        let mut id_map: HashMap<String, String> = HashMap::new();
+
+        for (key, node) in &self.state.nodes {
+            if let Some(cid) = corpus_id {
+                if node.corpus_id != cid {
+                    continue;
+                }
+            }
+            let mut props: Properties = Properties::new();
+            props.insert("nodeId".to_string(), GraphValue::String(node.node_id.clone()));
+            props.insert("corpusId".to_string(), GraphValue::String(node.corpus_id.clone()));
+            props.insert("layer".to_string(), GraphValue::String(node.layer.clone()));
+            if let Some(ref_str) = node.r#ref.as_str() {
+                props.insert("ref".to_string(), GraphValue::String(ref_str.to_string()));
+            } else {
+                props.insert("ref".to_string(), GraphValue::String(node.r#ref.to_string()));
+            }
+            let created = store.create_node(vec![node.label.clone()], props);
+            id_map.insert(key.clone(), created.id.clone());
+        }
+
+        for (_key, edge) in &self.state.edges {
+            if let Some(cid) = corpus_id {
+                if edge.corpus_id != cid {
+                    continue;
+                }
+            }
+            let src_key = Self::key(&edge.corpus_id, &edge.source_node_id);
+            let tgt_key = Self::key(&edge.corpus_id, &edge.target_node_id);
+            if let (Some(from_id), Some(to_id)) = (id_map.get(&src_key), id_map.get(&tgt_key)) {
+                let mut props: Properties = Properties::new();
+                props.insert("weight".to_string(), GraphValue::Float64(edge.weight));
+                if let Some(ref bk) = edge.bridge_kind {
+                    props.insert("bridgeKind".to_string(), GraphValue::String(bk.clone()));
+                }
+                props.insert("edgeId".to_string(), GraphValue::String(edge.edge_id.clone()));
+                store.create_edge(from_id, to_id, edge.relation.clone(), props);
+            }
+        }
+
+        store
     }
 
     fn handle(&mut self, req: RpcRequest) -> RpcResponse {
@@ -902,6 +954,20 @@ impl Server {
                 self.persist_if_needed()
                     .map_err(|err| Self::execution_io_error(format!("persist failed: {err}")))?;
                 Ok(json!(null))
+            }
+            "cypher_query" => {
+                let query_str = req.params.get("query").and_then(Value::as_str)
+                    .ok_or_else(|| Self::execution_client_error("missing query".to_string()))?;
+                let corpus_id = req.params.get("corpusId").and_then(Value::as_str);
+                let dialect_str = req.params.get("dialect").and_then(Value::as_str).unwrap_or("openCypher9");
+                let dialect = match dialect_str {
+                    "neo4jCompat" | "Neo4jCompat" => CypherDialect::Neo4jCompat,
+                    _ => CypherDialect::OpenCypher9,
+                };
+                let mut store = self.build_cypher_store(corpus_id);
+                let result = execute_query_with_dialect(&mut store, query_str, dialect)
+                    .map_err(|err| Self::execution_client_error(format!("cypher error: {err:?}")))?;
+                Ok(serde_json::to_value(result).unwrap_or(Value::Null))
             }
             "__debug_force_panic__" => {
                 if std::env::var("AGDB_ENABLE_TEST_CRASH").ok().as_deref() == Some("1") {
