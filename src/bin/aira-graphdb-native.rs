@@ -106,6 +106,7 @@ struct Server {
     audit_log_path: PathBuf,
     state: State,
     cache_dirty: bool,
+    batch_mode: bool,
     node_keys_by_corpus: HashMap<String, Vec<String>>,
     edge_keys_by_corpus: HashMap<String, Vec<String>>,
     adjacent_edge_keys_by_node: HashMap<String, Vec<String>>,
@@ -179,6 +180,7 @@ impl Server {
             db_path,
             state,
             cache_dirty: true,
+            batch_mode: false,
             node_keys_by_corpus: HashMap::new(),
             edge_keys_by_corpus: HashMap::new(),
             adjacent_edge_keys_by_node: HashMap::new(),
@@ -242,26 +244,26 @@ impl Server {
             .parent()
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from("."));
-        fs::create_dir_all(&parent)?;
+        fs::create_dir_all(&parent)
+            .map_err(|err| io::Error::other(format!("create_dir_all({:?}): {err}", parent)))?;
 
-        let file_name = self
-            .db_path
-            .file_name()
-            .and_then(|v| v.to_str())
-            .unwrap_or("aira-graphdb-native.json");
-        let tmp_path = parent.join(format!(".{file_name}.tmp"));
-
-        {
-            let mut tmp_file = fs::File::create(&tmp_path)?;
-            tmp_file.write_all(&raw)?;
-            tmp_file.sync_all()?;
-        }
-
-        fs::rename(&tmp_path, &self.db_path)?;
-
-        let dir_file = fs::File::open(&parent)?;
-        dir_file.sync_all()?;
+        // Direct write (truncate + write) instead of tmp + rename
+        // to avoid ENOENT on rename in some filesystems
+        let mut file = fs::File::create(&self.db_path)
+            .map_err(|err| io::Error::other(format!("File::create({:?}): {err}", self.db_path)))?;
+        file.write_all(&raw)
+            .map_err(|err| io::Error::other(format!("write_all({}bytes): {err}", raw.len())))?;
+        file.sync_all()
+            .map_err(|err| io::Error::other(format!("sync_all: {err}")))?;
         Ok(())
+    }
+
+    fn persist_if_needed(&mut self) -> io::Result<()> {
+        if self.batch_mode {
+            Ok(())
+        } else {
+            self.persist()
+        }
     }
 
     fn key(corpus_id: &str, id: &str) -> String {
@@ -408,6 +410,16 @@ impl Server {
         let result: Result<Value, AppError> = (|| {
             match req.method.as_str() {
             "ping" => Ok(json!({"pong": true})),
+            "batch_begin" => {
+                self.batch_mode = true;
+                Ok(json!(null))
+            }
+            "batch_commit" => {
+                self.batch_mode = false;
+                self.persist()
+                    .map_err(|err| Self::execution_io_error(format!("batch_commit persist failed: {err}")))?;
+                Ok(json!(null))
+            }
             "upsert_nodes" => {
                 let nodes = req.params.get("nodes").and_then(|v| v.as_array()).cloned().unwrap_or_default();
                 for node in nodes {
@@ -418,7 +430,7 @@ impl Server {
                         .insert(Self::key(&parsed.corpus_id, &parsed.node_id), parsed);
                 }
                 self.mark_cache_dirty();
-                self.persist()
+                self.persist_if_needed()
                     .map_err(|err| Self::execution_io_error(format!("persist failed: {err}")))?;
                 Ok(json!(null))
             }
@@ -432,7 +444,7 @@ impl Server {
                         .insert(Self::key(&parsed.corpus_id, &parsed.edge_id), parsed);
                 }
                 self.mark_cache_dirty();
-                self.persist()
+                self.persist_if_needed()
                     .map_err(|err| Self::execution_io_error(format!("persist failed: {err}")))?;
                 Ok(json!(null))
             }
@@ -504,7 +516,7 @@ impl Server {
                     });
                 }
                 self.mark_cache_dirty();
-                self.persist()
+                self.persist_if_needed()
                     .map_err(|err| Self::execution_io_error(format!("persist failed: {err}")))?;
                 Ok(json!(deleted))
             }
@@ -518,7 +530,7 @@ impl Server {
                     }
                 }
                 self.mark_cache_dirty();
-                self.persist()
+                self.persist_if_needed()
                     .map_err(|err| Self::execution_io_error(format!("persist failed: {err}")))?;
                 Ok(json!(deleted))
             }
@@ -559,7 +571,7 @@ impl Server {
                 });
                 self.state.passages.retain(|_, p| !(p.corpus_id == corpus_id && p.document_id == document_id));
                 self.mark_cache_dirty();
-                self.persist()
+                self.persist_if_needed()
                     .map_err(|err| Self::execution_io_error(format!("persist failed: {err}")))?;
                 Ok(json!({
                     "deletedNodes": before_nodes.saturating_sub(self.state.nodes.len()),
@@ -576,7 +588,7 @@ impl Server {
                 self.state.passages.retain(|_, p| p.corpus_id != corpus_id);
                 self.state.snapshots.remove(corpus_id);
                 self.mark_cache_dirty();
-                self.persist()
+                self.persist_if_needed()
                     .map_err(|err| Self::execution_io_error(format!("persist failed: {err}")))?;
                 Ok(json!({
                     "deletedNodes": before_nodes.saturating_sub(self.state.nodes.len()),
@@ -593,7 +605,7 @@ impl Server {
                         .insert(Self::key(&parsed.corpus_id, &parsed.id), parsed);
                 }
                 self.mark_cache_dirty();
-                self.persist()
+                self.persist_if_needed()
                     .map_err(|err| Self::execution_io_error(format!("persist failed: {err}")))?;
                 Ok(json!(null))
             }
@@ -651,7 +663,7 @@ impl Server {
                     doc != document_id
                 });
                 self.mark_cache_dirty();
-                self.persist()
+                self.persist_if_needed()
                     .map_err(|err| Self::execution_io_error(format!("persist failed: {err}")))?;
                 Ok(json!(null))
             }
@@ -663,7 +675,7 @@ impl Server {
                     .ok_or_else(|| Self::execution_client_error("missing snapshot.corpusId".to_string()))?
                     .to_string();
                 self.state.snapshots.insert(corpus_id, snapshot);
-                self.persist()
+                self.persist_if_needed()
                     .map_err(|err| Self::execution_io_error(format!("persist failed: {err}")))?;
                 Ok(json!(null))
             }
@@ -689,7 +701,7 @@ impl Server {
                     .ok_or_else(|| Self::execution_client_error("missing checkpoint.jobId".to_string()))?
                     .to_string();
                 self.state.checkpoints.insert(job_id, checkpoint);
-                self.persist()
+                self.persist_if_needed()
                     .map_err(|err| Self::execution_io_error(format!("persist failed: {err}")))?;
                 Ok(json!(null))
             }
@@ -783,7 +795,7 @@ impl Server {
                         .insert(Self::key(corpus_id, passage_id), item);
                 }
                 self.mark_cache_dirty();
-                self.persist()
+                self.persist_if_needed()
                     .map_err(|err| Self::execution_io_error(format!("persist failed: {err}")))?;
                 Ok(json!(null))
             }
@@ -831,7 +843,7 @@ impl Server {
                 let document_id = req.params.get("documentId").and_then(Value::as_str).unwrap_or_default();
                 self.state.passages.retain(|_, p| !(p.corpus_id == corpus_id && p.document_id == document_id));
                 self.mark_cache_dirty();
-                self.persist()
+                self.persist_if_needed()
                     .map_err(|err| Self::execution_io_error(format!("persist failed: {err}")))?;
                 Ok(json!(null))
             }
