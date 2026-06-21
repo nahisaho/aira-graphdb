@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.2.2
+
+- Maintenance release.
+- Version bump to `v0.2.2`.
+
 ## v0.2.1
 
 - Added compact binary snapshot/WAL storage.
