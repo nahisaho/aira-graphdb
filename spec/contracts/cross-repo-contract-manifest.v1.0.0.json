@@ -1,0 +1,27 @@
+{
+  "id": "cross-repo-contract-manifest.v1.0.0",
+  "version": "1.0.0",
+  "sourceRepository": "nahisaho/aira-graphdb",
+  "immutableRef": "refs/tags/contracts-v1",
+  "signedManifest": {
+    "algorithm": "Ed25519",
+    "publicKeySource": "nahisaho/aira-graphdb:spec/contracts/keys/token-rotation-ed25519.pub",
+    "keyId": "contracts-signing-ed25519-v1",
+    "keyFingerprint": "SHA256:7b3d3f968777f6f3f3138e9df0e7649af7f0c57cb2870f9c4c734d0da8a0d6b2",
+    "allowedSigners": ["nahisaho/aira-graphdb-release-bot"]
+  },
+  "artifacts": [
+    {
+      "path": "spec/contracts/p0-compat-test-map.v1.0.0.json",
+      "sha256": "3a0f7c3e09d7d42f7baf6f1f42fbb19be4e7614d9bcf3f6fa3ea50f791a4d7a1"
+    },
+    {
+      "path": "spec/contracts/backend-compat-failure-report.v1.0.0.json",
+      "sha256": "3158f5f2ef1ac3e60258b9a19e08e6a3ac242630520753d5a0bfbf6be28d0f4b"
+    },
+    {
+      "path": "spec/contracts/baseline-compat-fixture.v1.0.0.json",
+      "sha256": "c9aa88d6f3e3d4b8f2f5dfce2b5dc9d1f2af2ea6c87e3c7c3d38c76f1d02fa22"
+    }
+  ]
+}

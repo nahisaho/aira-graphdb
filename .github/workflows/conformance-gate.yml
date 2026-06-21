@@ -1,0 +1,142 @@
+name: conformance-gate
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  schedule:
+    - cron: "0 0 * * *"
+  release:
+    types:
+      - published
+
+jobs:
+  conformance:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run unit and integration tests
+        run: cargo test --quiet
+
+      - name: Run conformance suite
+        run: cargo test --test cypher_conformance --quiet
+
+      - name: Run native perf gate
+        run: cargo test --test native_perf_gate --quiet
+
+      - name: Run native soak gate
+        run: |
+          PROFILE="P0-NATIVE-SOAK-SMOKE"
+          if [ "${{ github.event_name }}" = "schedule" ] || [ "${{ github.event_name }}" = "release" ]; then
+            PROFILE="P0-NATIVE-SOAK"
+          fi
+          AGDB_NATIVE_SOAK_PROFILE="$PROFILE" cargo test --test native_soak_gate --quiet
+
+      - name: Validate release-block gate
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          report_path = Path("target/conformance/opencypher9-report.json")
+          if not report_path.exists():
+              raise SystemExit("conformance report missing")
+
+          report = json.loads(report_path.read_text(encoding="utf-8"))
+          pass_rate = float(report.get("pass_rate", 0))
+          unresolved = report.get("unresolved_tck_ids", [])
+          failed = report.get("failed_test_ids", [])
+          mandatory_ok = bool(report.get("mandatory_negative_cases_satisfied", False))
+
+          if pass_rate < 100.0:
+              raise SystemExit(f"release blocked: pass_rate={pass_rate}")
+          if unresolved:
+              raise SystemExit(f"release blocked: unresolved_tck_ids={unresolved}")
+          if not mandatory_ok:
+              raise SystemExit("release blocked: mandatory negative-case set incomplete")
+          if failed:
+              raise SystemExit(f"release blocked: failed_test_ids={failed}")
+          print("conformance release gate passed")
+          PY
+
+      - name: Validate native perf gate
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          report_path = Path("artifacts/native-bench-report.json")
+          if not report_path.exists():
+              raise SystemExit("native bench report missing")
+
+          report = json.loads(report_path.read_text(encoding="utf-8"))
+          if not bool(report.get("gate_pass", False)):
+              raise SystemExit(f"native perf gate failed: {report.get('metrics_ms')}")
+          print("native perf gate passed")
+          PY
+
+      - name: Validate native soak gate
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          report_path = Path("artifacts/native-soak-report.json")
+          if not report_path.exists():
+              raise SystemExit("native soak report missing")
+
+          report = json.loads(report_path.read_text(encoding="utf-8"))
+          event_name = "${{ github.event_name }}"
+          expected_profile = "P0-NATIVE-SOAK" if event_name in ("schedule", "release") else "P0-NATIVE-SOAK-SMOKE"
+          expected_duration = 1440 if expected_profile == "P0-NATIVE-SOAK" else 30
+
+          if report.get("profile") != expected_profile:
+              raise SystemExit(
+                  f"native soak profile mismatch: expected={expected_profile} actual={report.get('profile')}"
+              )
+          if int(report.get("durationMinutes", 0)) != expected_duration:
+              raise SystemExit(
+                  f"native soak duration mismatch: expected={expected_duration} actual={report.get('durationMinutes')}"
+              )
+          if int(report.get("crashCount", 1)) != 0:
+              raise SystemExit(f"native soak crash count failed: {report.get('crashCount')}")
+          if float(report.get("internalFailureRate", 1.0)) > 0.001:
+              raise SystemExit(
+                  f"native soak internal failure rate failed: {report.get('internalFailureRate')}"
+              )
+          if not bool(report.get("requiredFieldsValid", False)):
+              raise SystemExit("native soak required field validation failed")
+          if not bool(report.get("gatePass", False)):
+              raise SystemExit("native soak gate failed")
+          print("native soak gate passed")
+          PY
+
+      - name: Upload conformance artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: opencypher9-conformance-report
+          path: target/conformance/opencypher9-report.json
+
+      - name: Upload native bench artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-bench-report
+          path: artifacts/native-bench-report.json
+
+      - name: Upload native soak artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-soak-report
+          path: artifacts/native-soak-report.json
+
+      - name: Upload native audit artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-audit-events
+          path: artifacts/native-audit-events.json

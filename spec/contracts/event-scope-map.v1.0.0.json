@@ -1,0 +1,23 @@
+{
+  "id": "event-scope-map.v1.0.0",
+  "version": "1.0.0",
+  "rules": [
+    {
+      "when": { "event_name": "pull_request", "from_fork": true },
+      "scope": "pull_request"
+    },
+    {
+      "when": { "event_name": "pull_request", "from_fork": false },
+      "scope": "pull_request"
+    },
+    {
+      "when": { "event_name": "merge_group" },
+      "scope": "merge_group"
+    },
+    {
+      "when": { "event_name": "push", "ref_protected": true, "merge_queue": false },
+      "scope": "protected_branch_push"
+    }
+  ],
+  "onUnmapped": "fail"
+}

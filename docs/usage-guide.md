@@ -1,0 +1,166 @@
+# Usage Guide (English)
+
+## 1. Rust API
+
+### Handshake
+
+```rust
+use aira_graphdb::protocol::{HandshakeRequest, negotiate};
+
+let response = negotiate(&HandshakeRequest {
+    protocol_version: "protocol-p0@1.0.0".into(),
+    canonical_type_system_version: "canonical-types@1.0.0".into(),
+})?;
+assert!(response.accepted);
+# Ok::<(), aira_graphdb::errors::GraphDbError>(())
+```
+
+### Query Execution
+
+```rust
+use aira_graphdb::graph::InMemoryGraphStore;
+use aira_graphdb::query::execute_query;
+
+let mut store = InMemoryGraphStore::new();
+execute_query(&mut store, "CREATE (n:Paper {title:'GraphDB'})")?;
+execute_query(&mut store, "MERGE (n:Paper {title:'GraphDB'}) ON MATCH SET n.status='existing'")?;
+let _ = execute_query(&mut store, "MATCH (n:Paper) WITH n RETURN n ORDER BY n.id SKIP 0 LIMIT 1")?;
+# Ok::<(), aira_graphdb::errors::GraphDbError>(())
+```
+
+## 2. Server Transport (JSON Lines)
+
+Execution boundary is strict: `CONNECTED -> TLS_OK -> AUTH_OK -> APP_READY`.
+
+```json
+{"type":"handshake","protocol_version":"protocol-p0@1.0.0","canonical_type_system_version":"canonical-types@1.0.0"}
+{"type":"auth","bearer_token":"<jwt>"}
+{"type":"begin_tx"}
+{"type":"query","tx_id":"tx-1","query":"CREATE (n:Paper {title:'GraphDB'})"}
+{"type":"commit_tx","tx_id":"tx-1"}
+```
+
+Before `APP_READY`, application requests are rejected with `AUTH_REQUIRED`.
+
+## 3. Conformance Report
+
+`build_and_persist_conformance_report` writes:
+
+```text
+target/conformance/opencypher9-report.json
+```
+
+The report includes:
+
+- `pass_rate`
+- `unresolved_tck_ids`
+- `mandatory_negative_cases_satisfied`
+- `failed_test_ids`
+- clause-level and feature-level PASS/FAIL
+
+## 4. Audit Events
+
+Server/runtime audit events are appended to `<db-file>.audit.log`.
+Native JSON-RPC request anomaly audit events are appended to `<db-file>.native-audit.log`.
+
+Implemented event types:
+
+- `AUTH_FAILED`
+- `AUTH_REQUIRED_REJECTED`
+- `ROLLBACK_EXECUTED`
+- `REFERENTIAL_INTEGRITY_VIOLATION`
+- `DETERMINISTIC_CONFLICT`
+
+Native request anomaly entries include required fields:
+
+- `errorCode`
+- `failureClass` (`INTERNAL_BUG | IO_FAILURE | OOM | TIMEOUT | CLIENT_INPUT`)
+- `requestId`
+- `timestamp`
+
+Native crash entries are auto-recorded as `PROCESS_CRASH` with:
+
+- `errorCode`
+- `timestamp`
+- `processExitCode`
+- `signal`
+- `lastRequestId`
+- `uptimeSec`
+- `cause` (if available)
+
+## 5. Native Perf/Soak Quality Gate Artifacts
+
+The native gate suite writes:
+
+```text
+artifacts/native-bench-report.json
+artifacts/native-soak-report.json
+artifacts/native-audit-events.json
+```
+
+`native-soak-report.json` includes:
+
+- `profile` (`P0-NATIVE-SOAK-SMOKE` for pull requests, `P0-NATIVE-SOAK` for schedule/release)
+- `durationMinutes` (30 or 1440)
+- `crashCount` (must be `0`)
+- `internalFailureRate` (must be `<= 0.001`)
+- `requiredFieldsValid`
+- `gatePass`
+
+## 6. openCypher Coverage Status (Current)
+
+| Area | Status | Notes |
+|---|---|---|
+| `MATCH`, `OPTIONAL MATCH`, `WHERE`, `WITH`, `RETURN` | Supported (profile subset) | Includes `WITH` alias scope validation |
+| `ORDER BY`, `SKIP`, `LIMIT` | Supported | Strategy switch: ordered vs multiset (`resolve_row_comparison_strategy`) |
+| `CREATE`, `MERGE`, `SET`, `REMOVE`, `DELETE`, `DETACH` | Supported (profile subset) | `MERGE` on-create/on-match semantics implemented |
+| `UNWIND` + aggregation | Supported | `count/sum/avg/min/max/collect` |
+| Unsupported extensions (`CALL`, vendor procedures, APOC) | Explicitly rejected | Returns `UNSUPPORTED_FEATURE` with `details.unsupported_clause` |
+| Relationship traversal pattern (`()-[]->()`) | Not supported yet | Out of current execution scope |
+
+## 7. Storage Port Compatibility with aira-synapse
+
+Canonical contract:
+
+```text
+spec/contracts/aira-synapse-storage-ports.v1.0.0.json
+```
+
+Phase 4 implementation includes:
+
+- AST-based method parity checks for `IGraphStore / IVectorIndex / IMemoryStore / IGraphProjection / ILexicalRetriever`
+- `aira-graphdb` backend selection in `memgraphrag` storage factory
+- storage-port compatibility integration tests (`graph/vector/lexical/memory/projection`)
+- vector/lexical compatibility evaluator with fixed validation error codes:
+  - `INVALID_TOP_K`
+  - `INVALID_THRESHOLD`
+  - `INVALID_CORPUS_ID`
+  - `INVALID_NAMESPACE`
+
+Compatibility workflow references:
+
+- `.github/workflows/aira-synapse-backend-compat.yml`
+- `spec/contracts/p0-compat-test-map.v1.0.0.json`
+- `spec/contracts/backend-compat-failure-report.v1.0.0.json`
+- `spec/contracts/branch-protection-policy.v1.0.0.json`
+- `spec/contracts/event-scope-map.v1.0.0.json`
+
+### Native transport path
+
+`backend=aira-graphdb` now uses the native Rust sidecar process:
+
+- Rust binary: `aira-graphdb-native` (`src/bin/aira-graphdb-native.rs`)
+- Transport: JSON-RPC over stdin/stdout
+- Persistent state: `--db <path>` JSON snapshot file
+
+This replaces the previous SQLite compatibility fallback for the `aira-graphdb` backend path.
+
+## 8. Native RPC resilience contract
+
+The native resilience contract test validates that invalid JSON, unknown methods, and execution failures return fixed error codes while the sidecar process stays alive.
+
+```bash
+cargo test --test native_rpc_resilience -- --nocapture
+```
+
+The same test suite also includes a forced panic scenario to verify automatic `PROCESS_CRASH` audit logging.

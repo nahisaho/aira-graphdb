@@ -1,0 +1,11 @@
+{
+  "id": "artifact-attestation-policy.v1.0.0",
+  "version": "1.0.0",
+  "attestation": {
+    "algorithm": "Ed25519",
+    "publicKeySource": "nahisaho/aira-graphdb:spec/contracts/keys/token-rotation-ed25519.pub",
+    "signedFields": ["runId", "commitSha", "artifactName", "artifactSha256"],
+    "verificationProcedure": "ed25519-verify(payload=signedFields, signature, publicKeySource)",
+    "revocationPolicy": "key-rotation-and-revocation-list"
+  }
+}

@@ -1,0 +1,180 @@
+version: 1.0.0
+spec_id: AGDB-CYPHER-OPENCYPHER9@1.0.0
+source:
+  type: upstream_tck_snapshot
+  repository: "openCypher/openCypher"
+  snapshot_ref: "4f9c2e7a18bb3c4e92b561a8d3ef1c7e5b2a9d10"
+policy:
+  full_support: true
+  include_all_normative_features: true
+  exclude_non_normative_extensions:
+    - EXT-CALL
+    - EXT-VENDOR-PROCEDURE
+    - EXT-APOC
+normative_features:
+  - CLAUSE-MATCH
+  - CLAUSE-OPTIONAL-MATCH
+  - CLAUSE-WHERE
+  - CLAUSE-WITH
+  - CLAUSE-UNWIND
+  - CLAUSE-RETURN
+  - CLAUSE-ORDER-BY
+  - CLAUSE-SKIP
+  - CLAUSE-LIMIT
+  - CLAUSE-CREATE
+  - CLAUSE-MERGE
+  - CLAUSE-SET
+  - CLAUSE-REMOVE
+  - CLAUSE-DELETE
+  - CLAUSE-DETACH-DELETE
+  - AGG-COUNT
+  - AGG-SUM
+  - AGG-AVG
+  - AGG-MIN
+  - AGG-MAX
+  - AGG-COLLECT
+  - EXPR-PROPERTY-ACCESS
+  - EXPR-COMPARISON
+  - EXPR-BOOLEAN-LOGIC
+  - EXPR-LITERAL-LIST-MAP
+required_tck_groups:
+  - syntax
+  - pattern-matching
+  - projection-and-aggregation
+  - expressions
+  - updates
+  - semantics
+generation:
+  extractor_script: "scripts/extract-opencypher-tck-required.ts"
+  provenance:
+    input_snapshot_sha: "4f9c2e7a18bb3c4e92b561a8d3ef1c7e5b2a9d10"
+    generated_at: "2026-06-21T04:12:44+09:00"
+    upstream_normative_total_count: 25
+    extracted_normative_hash: "sha256:8f53f4b04f8c3a1f4d733b2f7bc1d9d28f0b9bf5dc3428f8f393b4df1db86e9a"
+required_tck_ids:
+  - id: TCK-SYNTAX-001
+    upstream_file: "tck/features/syntax/SyntaxAcceptance.feature"
+    upstream_scenario: "Basic parser acceptance"
+  - id: TCK-SYNTAX-002
+    upstream_file: "tck/features/syntax/SyntaxError.feature"
+    upstream_scenario: "Invalid token emits syntax error"
+  - id: TCK-MATCH-001
+    upstream_file: "tck/features/clauses/match/Match1.feature"
+    upstream_scenario: "Simple MATCH pattern"
+  - id: TCK-MATCH-002
+    upstream_file: "tck/features/clauses/match/Match2.feature"
+    upstream_scenario: "MATCH with relationship chain"
+  - id: TCK-OPTIONAL-MATCH-001
+    upstream_file: "tck/features/clauses/optional-match/OptionalMatch1.feature"
+    upstream_scenario: "OPTIONAL MATCH null-padding"
+  - id: TCK-WHERE-001
+    upstream_file: "tck/features/clauses/where/Where1.feature"
+    upstream_scenario: "WHERE predicate filtering"
+  - id: TCK-WITH-001
+    upstream_file: "tck/features/clauses/with/With1.feature"
+    upstream_scenario: "WITH scope transition"
+  - id: TCK-UNWIND-001
+    upstream_file: "tck/features/clauses/unwind/Unwind1.feature"
+    upstream_scenario: "UNWIND list expansion"
+  - id: TCK-RETURN-001
+    upstream_file: "tck/features/clauses/return/Return1.feature"
+    upstream_scenario: "RETURN projection"
+  - id: TCK-ORDER-BY-001
+    upstream_file: "tck/features/clauses/order-by/OrderBy1.feature"
+    upstream_scenario: "ORDER BY ascending and descending"
+  - id: TCK-SKIP-LIMIT-001
+    upstream_file: "tck/features/clauses/skip-limit/SkipLimit1.feature"
+    upstream_scenario: "SKIP/LIMIT paging"
+  - id: TCK-CREATE-001
+    upstream_file: "tck/features/clauses/create/Create1.feature"
+    upstream_scenario: "CREATE node"
+  - id: TCK-MERGE-001
+    upstream_file: "tck/features/clauses/merge/Merge1.feature"
+    upstream_scenario: "MERGE on create/on match"
+  - id: TCK-SET-REMOVE-001
+    upstream_file: "tck/features/clauses/set-remove/SetRemove1.feature"
+    upstream_scenario: "SET and REMOVE property"
+  - id: TCK-DELETE-001
+    upstream_file: "tck/features/clauses/delete/Delete1.feature"
+    upstream_scenario: "DELETE node"
+  - id: TCK-DETACH-DELETE-001
+    upstream_file: "tck/features/clauses/delete/DetachDelete1.feature"
+    upstream_scenario: "DETACH DELETE node"
+  - id: TCK-AGG-COUNT-001
+    upstream_file: "tck/features/functions/aggregation/Count.feature"
+    upstream_scenario: "count aggregation"
+  - id: TCK-AGG-SUM-001
+    upstream_file: "tck/features/functions/aggregation/Sum.feature"
+    upstream_scenario: "sum aggregation"
+  - id: TCK-AGG-AVG-001
+    upstream_file: "tck/features/functions/aggregation/Avg.feature"
+    upstream_scenario: "avg aggregation"
+  - id: TCK-AGG-MIN-MAX-001
+    upstream_file: "tck/features/functions/aggregation/MinMax.feature"
+    upstream_scenario: "min/max aggregation"
+  - id: TCK-AGG-COLLECT-001
+    upstream_file: "tck/features/functions/aggregation/Collect.feature"
+    upstream_scenario: "collect aggregation"
+  - id: TCK-EXPR-PROPERTY-ACCESS-001
+    upstream_file: "tck/features/expressions/property-access/PropertyAccess1.feature"
+    upstream_scenario: "Property access expression"
+  - id: TCK-EXPR-COMPARISON-001
+    upstream_file: "tck/features/expressions/comparison/Comparison1.feature"
+    upstream_scenario: "Comparison expression"
+  - id: TCK-EXPR-BOOLEAN-LOGIC-001
+    upstream_file: "tck/features/expressions/boolean-logic/BooleanLogic1.feature"
+    upstream_scenario: "Boolean AND/OR/NOT"
+  - id: TCK-EXPR-LITERAL-LIST-MAP-001
+    upstream_file: "tck/features/expressions/literals/ListMapLiteral1.feature"
+    upstream_scenario: "List and map literals"
+tck_selector_map:
+  - tck_id: TCK-SYNTAX-001
+    selector: TCK-SYNTAX-001
+  - tck_id: TCK-SYNTAX-002
+    selector: TCK-SYNTAX-002
+  - tck_id: TCK-MATCH-001
+    selector: TCK-MATCH-001
+  - tck_id: TCK-MATCH-002
+    selector: TCK-MATCH-002
+  - tck_id: TCK-OPTIONAL-MATCH-001
+    selector: TCK-OPTIONAL-MATCH-001
+  - tck_id: TCK-WHERE-001
+    selector: TCK-WHERE-001
+  - tck_id: TCK-WITH-001
+    selector: TCK-WITH-001
+  - tck_id: TCK-UNWIND-001
+    selector: TCK-UNWIND-001
+  - tck_id: TCK-RETURN-001
+    selector: TCK-RETURN-001
+  - tck_id: TCK-ORDER-BY-001
+    selector: TCK-ORDER-BY-001
+  - tck_id: TCK-SKIP-LIMIT-001
+    selector: TCK-SKIP-LIMIT-001
+  - tck_id: TCK-CREATE-001
+    selector: TCK-CREATE-001
+  - tck_id: TCK-MERGE-001
+    selector: TCK-MERGE-001
+  - tck_id: TCK-SET-REMOVE-001
+    selector: TCK-SET-REMOVE-001
+  - tck_id: TCK-DELETE-001
+    selector: TCK-DELETE-001
+  - tck_id: TCK-DETACH-DELETE-001
+    selector: TCK-DETACH-DELETE-001
+  - tck_id: TCK-AGG-COUNT-001
+    selector: TCK-AGG-COUNT-001
+  - tck_id: TCK-AGG-SUM-001
+    selector: TCK-AGG-SUM-001
+  - tck_id: TCK-AGG-AVG-001
+    selector: TCK-AGG-AVG-001
+  - tck_id: TCK-AGG-MIN-MAX-001
+    selector: TCK-AGG-MIN-MAX-001
+  - tck_id: TCK-AGG-COLLECT-001
+    selector: TCK-AGG-COLLECT-001
+  - tck_id: TCK-EXPR-PROPERTY-ACCESS-001
+    selector: TCK-EXPR-PROPERTY-ACCESS-001
+  - tck_id: TCK-EXPR-COMPARISON-001
+    selector: TCK-EXPR-COMPARISON-001
+  - tck_id: TCK-EXPR-BOOLEAN-LOGIC-001
+    selector: TCK-EXPR-BOOLEAN-LOGIC-001
+  - tck_id: TCK-EXPR-LITERAL-LIST-MAP-001
+    selector: TCK-EXPR-LITERAL-LIST-MAP-001

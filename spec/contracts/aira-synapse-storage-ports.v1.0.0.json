@@ -1,0 +1,179 @@
+{
+  "id": "aira-synapse-storage-ports.v1.0.0",
+  "version": "1.0.0",
+  "source": {
+    "repository": "nahisaho/aira-synapse",
+    "ref": "main"
+  },
+  "ports": {
+    "IGraphStore": {
+      "requiredMethods": [
+        "upsertNodes",
+        "upsertEdges",
+        "getNode",
+        "getNodes",
+        "getAdjacent",
+        "getEdges",
+        "deleteNodes",
+        "deleteEdges",
+        "deleteByDocument",
+        "deleteByCorpus"
+      ],
+      "methodContracts": {
+        "upsertNodes": {
+          "request": { "required": ["nodes"] },
+          "response": { "type": "void" },
+          "errors": ["INVALID_ARGUMENT", "REFERENTIAL_INTEGRITY_VIOLATION"]
+        },
+        "upsertEdges": {
+          "request": { "required": ["edges"] },
+          "response": { "type": "void" },
+          "errors": ["INVALID_ARGUMENT", "REFERENTIAL_INTEGRITY_VIOLATION"]
+        },
+        "getNode": {
+          "request": { "required": ["corpusId", "nodeId"] },
+          "response": { "required": ["nodeId", "corpusId", "layer", "ref", "label"], "nullable": true },
+          "errors": ["INVALID_ARGUMENT", "INVALID_CORPUS_ID"]
+        },
+        "getNodes": {
+          "request": { "required": ["corpusId"], "optional": ["layer"] },
+          "response": { "type": "array" },
+          "errors": ["INVALID_ARGUMENT", "INVALID_CORPUS_ID"]
+        },
+        "getAdjacent": {
+          "request": { "required": ["corpusId", "nodeId"] },
+          "response": { "type": "array" },
+          "errors": ["INVALID_ARGUMENT", "INVALID_CORPUS_ID"]
+        },
+        "getEdges": {
+          "request": { "required": ["corpusId"], "optional": ["sourceNodeId"] },
+          "response": { "type": "array" },
+          "errors": ["INVALID_ARGUMENT", "INVALID_CORPUS_ID"]
+        },
+        "deleteNodes": {
+          "request": { "required": ["corpusId", "nodeIds"] },
+          "response": { "type": "number" },
+          "errors": ["INVALID_ARGUMENT"]
+        },
+        "deleteEdges": {
+          "request": { "required": ["corpusId", "edgeIds"] },
+          "response": { "type": "number" },
+          "errors": ["INVALID_ARGUMENT"]
+        },
+        "deleteByDocument": {
+          "request": { "required": ["corpusId", "documentId"] },
+          "response": { "required": ["deletedNodes", "deletedEdges"] },
+          "errors": ["INVALID_ARGUMENT", "INVALID_CORPUS_ID"]
+        },
+        "deleteByCorpus": {
+          "request": { "required": ["corpusId"] },
+          "response": { "required": ["deletedNodes", "deletedEdges"] },
+          "errors": ["INVALID_ARGUMENT", "INVALID_CORPUS_ID"]
+        }
+      }
+    },
+    "IVectorIndex": {
+      "requiredMethods": ["upsert", "search", "deleteByDocument"],
+      "methodContracts": {
+        "upsert": {
+          "request": { "required": ["records[]"] },
+          "response": { "type": "void" },
+          "errors": ["INVALID_ARGUMENT", "INVALID_CORPUS_ID", "INVALID_NAMESPACE"]
+        },
+        "search": {
+          "request": { "required": ["queryVector", "corpusId", "namespace", "topK"], "optional": ["threshold"] },
+          "response": {
+            "itemRequired": ["id", "score", "metadata"],
+            "matchRule": "topK documentId set equality against neo4j baseline; threshold specified => compare after threshold filter"
+          },
+          "errors": ["INVALID_ARGUMENT", "INVALID_TOP_K", "INVALID_THRESHOLD", "INVALID_CORPUS_ID", "INVALID_NAMESPACE"]
+        },
+        "deleteByDocument": {
+          "request": { "required": ["documentId", "corpusId", "namespace"] },
+          "response": { "type": "void" },
+          "errors": ["INVALID_ARGUMENT", "INVALID_CORPUS_ID", "INVALID_NAMESPACE"]
+        }
+      }
+    },
+    "IMemoryStore": {
+      "requiredMethods": ["load", "save", "saveCheckpoint", "loadCheckpoint", "validateIntegrity"],
+      "methodContracts": {
+        "load": {
+          "request": { "required": ["corpusId"] },
+          "response": { "required": ["corpusId", "schemas", "facts", "passages", "schemaVersion"] },
+          "errors": ["INVALID_ARGUMENT", "INVALID_CORPUS_ID"]
+        },
+        "save": {
+          "request": { "required": ["snapshot"] },
+          "response": { "type": "void" },
+          "errors": ["INVALID_ARGUMENT"]
+        },
+        "saveCheckpoint": {
+          "request": { "required": ["jobId", "corpusId", "processedDocumentIds", "updatedAt"] },
+          "response": { "type": "void" },
+          "errors": ["INVALID_ARGUMENT"]
+        },
+        "loadCheckpoint": {
+          "request": { "required": ["jobId"] },
+          "response": { "nullable": true },
+          "errors": ["INVALID_ARGUMENT"]
+        },
+        "validateIntegrity": {
+          "request": { "required": ["corpusId"] },
+          "response": { "type": "array" },
+          "errors": ["INVALID_ARGUMENT"]
+        }
+      }
+    },
+    "IGraphProjection": {
+      "requiredMethods": ["getTransitions", "getDanglingNodes", "getNodeCount"],
+      "methodContracts": {
+        "getTransitions": {
+          "request": { "required": ["corpusId"] },
+          "response": { "type": "asyncIterable" },
+          "errors": ["INVALID_ARGUMENT", "INVALID_CORPUS_ID"]
+        },
+        "getDanglingNodes": {
+          "request": { "required": ["corpusId"] },
+          "response": { "type": "array" },
+          "errors": ["INVALID_ARGUMENT", "INVALID_CORPUS_ID"]
+        },
+        "getNodeCount": {
+          "request": { "required": ["corpusId"] },
+          "response": { "type": "number" },
+          "errors": ["INVALID_ARGUMENT"]
+        }
+      }
+    },
+    "ILexicalRetriever": {
+      "requiredMethods": ["indexPassages", "search", "deleteByDocument"],
+      "methodContracts": {
+        "indexPassages": {
+          "request": { "required": ["corpusId", "passages[]"] },
+          "response": { "type": "void" },
+          "errors": ["INVALID_ARGUMENT", "INVALID_CORPUS_ID"]
+        },
+        "search": {
+          "request": { "required": ["corpusId", "query", "topK"] },
+          "response": {
+            "itemRequired": ["passageId", "score"],
+            "sortRule": [
+              { "field": "score", "order": "desc" },
+              { "field": "passageId", "order": "asc" }
+            ]
+          },
+          "errors": ["INVALID_ARGUMENT", "INVALID_TOP_K", "INVALID_CORPUS_ID"]
+        },
+        "deleteByDocument": {
+          "request": { "required": ["corpusId", "documentId"] },
+          "response": { "type": "void" },
+          "errors": ["INVALID_ARGUMENT", "INVALID_CORPUS_ID"]
+        }
+      }
+    }
+  },
+  "errorContract": "AGDB-ERROR-CODES@1.0.0",
+  "passCriteria": {
+    "contractTestPassRate": 1.0
+  }
+}

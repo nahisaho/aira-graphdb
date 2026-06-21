@@ -1,0 +1,87 @@
+{
+  "id": "branch-protection-policy.v1.0.0",
+  "version": "1.0.0",
+  "repository": "nahisaho/aira-synapse",
+  "branch": "main",
+  "monitoredBranches": ["main"],
+  "requiredStatusChecks": [
+    "backend-compat",
+    "backend-compat-strict",
+    "storage-port-contract",
+    "storage-port-compat",
+    "branch-protection-audit",
+    "branch-protection-audit-strict"
+  ],
+  "requiredStatusCheckContexts": [
+    "backend-compat / backend-compat",
+    "backend-compat-strict / backend-compat-strict",
+    "storage-port-contract / storage-port-contract",
+    "storage-port-compat / storage-port-compat",
+    "branch-protection-audit / branch-protection-audit",
+    "branch-protection-audit-strict / branch-protection-audit-strict"
+  ],
+  "requiredChecksDetailed": [
+    {
+      "context": "backend-compat / backend-compat",
+      "workflow": "aira-synapse-backend-compat.yml",
+      "job": "backend-compat"
+    },
+    {
+      "context": "backend-compat-strict / backend-compat-strict",
+      "workflow": "aira-synapse-backend-compat.yml",
+      "job": "backend-compat-strict"
+    },
+    {
+      "context": "storage-port-contract / storage-port-contract",
+      "workflow": "aira-synapse-backend-compat.yml",
+      "job": "storage-port-contract"
+    },
+    {
+      "context": "storage-port-compat / storage-port-compat",
+      "workflow": "aira-synapse-backend-compat.yml",
+      "job": "storage-port-compat"
+    },
+    {
+      "context": "branch-protection-audit / branch-protection-audit",
+      "workflow": "aira-synapse-backend-compat.yml",
+      "job": "branch-protection-audit"
+    },
+    {
+      "context": "branch-protection-audit-strict / branch-protection-audit-strict",
+      "workflow": "aira-synapse-backend-compat.yml",
+      "job": "branch-protection-audit-strict"
+    }
+  ],
+  "requiredChecksByScope": {
+    "pull_request": [
+      "backend-compat",
+      "storage-port-contract",
+      "storage-port-compat",
+      "branch-protection-audit"
+    ],
+    "merge_group": [
+      "backend-compat",
+      "backend-compat-strict",
+      "storage-port-contract",
+      "storage-port-compat",
+      "branch-protection-audit",
+      "branch-protection-audit-strict"
+    ],
+    "protected_branch_push": [
+      "backend-compat",
+      "storage-port-contract",
+      "storage-port-compat",
+      "branch-protection-audit"
+    ]
+  },
+  "conclusionPolicy": {
+    "untrustedPullRequestRequiredChecks": "success",
+    "strictChecksOnUntrustedPullRequest": "neutral",
+    "reasonChannel": "output.summary"
+  },
+  "mergePolicy": {
+    "requireMergeQueue": true,
+    "strictChecksMustBindToProtectedSha": true
+  },
+  "strict": true
+}

@@ -1,0 +1,218 @@
+version: 1.0.0
+spec_id: AGDB-CYPHER-OPENCYPHER9@1.0.0
+execution_resolution:
+  resolver: deterministic_id_mapper
+  runner: "cargo test --test cypher_conformance -- <selector>"
+  selector_rule: "selector MUST equal required_tests[*].id"
+  fail_if_unresolvable: true
+  tck_mapping_rule: "opencypher9-tck-required.yaml.tck_selector_map MUST provide 1:1 mapping for all required_tck_ids"
+  fail_if_tck_id_unmapped: true
+required_tests:
+  - id: OC9-TCK-FULL-RUN-001
+    type: positive
+    covers_req: REQ-AGDB-017
+    covers_acceptance: "openCypher 9 upstream TCK の必須ケース集合を 100% PASS する"
+    covers_tck_ids:
+      - TCK-SYNTAX-001
+      - TCK-SYNTAX-002
+      - TCK-MATCH-001
+      - TCK-MATCH-002
+      - TCK-OPTIONAL-MATCH-001
+      - TCK-WHERE-001
+      - TCK-WITH-001
+      - TCK-UNWIND-001
+      - TCK-RETURN-001
+      - TCK-ORDER-BY-001
+      - TCK-SKIP-LIMIT-001
+      - TCK-CREATE-001
+      - TCK-MERGE-001
+      - TCK-SET-REMOVE-001
+      - TCK-DELETE-001
+      - TCK-DETACH-DELETE-001
+      - TCK-AGG-COUNT-001
+      - TCK-AGG-SUM-001
+      - TCK-AGG-AVG-001
+      - TCK-AGG-MIN-MAX-001
+      - TCK-AGG-COLLECT-001
+      - TCK-EXPR-PROPERTY-ACCESS-001
+      - TCK-EXPR-COMPARISON-001
+      - TCK-EXPR-BOOLEAN-LOGIC-001
+      - TCK-EXPR-LITERAL-LIST-MAP-001
+  - id: OC9-TCK-MANIFEST-SYNC-001
+    type: negative
+    covers_req: REQ-AGDB-018
+    covers_acceptance: "opencypher9-tck-required.yaml とマニフェストの規範機能集合が一致しない場合にリリースを失敗させる"
+    covers_tck_ids:
+      - TCK-SYNTAX-001
+      - TCK-SYNTAX-002
+      - TCK-MATCH-001
+      - TCK-MATCH-002
+      - TCK-OPTIONAL-MATCH-001
+      - TCK-WHERE-001
+      - TCK-WITH-001
+      - TCK-UNWIND-001
+      - TCK-RETURN-001
+      - TCK-ORDER-BY-001
+      - TCK-SKIP-LIMIT-001
+      - TCK-CREATE-001
+      - TCK-MERGE-001
+      - TCK-SET-REMOVE-001
+      - TCK-DELETE-001
+      - TCK-DETACH-DELETE-001
+      - TCK-AGG-COUNT-001
+      - TCK-AGG-SUM-001
+      - TCK-AGG-AVG-001
+      - TCK-AGG-MIN-MAX-001
+      - TCK-AGG-COLLECT-001
+      - TCK-EXPR-PROPERTY-ACCESS-001
+      - TCK-EXPR-COMPARISON-001
+      - TCK-EXPR-BOOLEAN-LOGIC-001
+      - TCK-EXPR-LITERAL-LIST-MAP-001
+  - id: OC9-TCK-SNAPSHOT-REF-SHA-001
+    type: negative
+    covers_req: REQ-AGDB-017
+    covers_acceptance: "opencypher9-tck-required.yaml の snapshot_ref が commit SHA で固定される"
+  - id: OC9-MATCH-BASIC-001
+    type: positive
+    covers_req: REQ-AGDB-005
+    covers_acceptance: "構文に含まれる句を実行できる"
+  - id: OC9-OPTIONAL-MATCH-001
+    type: positive
+    covers_req: REQ-AGDB-005
+    covers_acceptance: "OPTIONAL MATCH を含む読み取りクエリを正しく実行できる"
+  - id: OC9-WHERE-PREDICATE-001
+    type: positive
+    covers_req: REQ-AGDB-005
+    covers_acceptance: "構文に含まれる句を実行できる"
+  - id: OC9-WITH-SCOPE-001
+    type: positive
+    covers_req: REQ-AGDB-005
+    covers_acceptance: "WITH によるスコープ切替と別名解決を正しく実行できる"
+  - id: OC9-UNWIND-LIST-001
+    type: positive
+    covers_req: REQ-AGDB-005
+    covers_acceptance: "UNWIND と集約関数を正しく実行できる"
+  - id: OC9-RETURN-PROJECTION-001
+    type: positive
+    covers_req: REQ-AGDB-005
+    covers_acceptance: "構文に含まれる句を実行できる"
+  - id: OC9-ORDER-BY-001
+    type: positive
+    covers_req: REQ-AGDB-005
+    covers_acceptance: "ORDER BY/SKIP/LIMIT を組み合わせた結果制御が正しく機能する"
+  - id: OC9-SKIP-LIMIT-001
+    type: positive
+    covers_req: REQ-AGDB-005
+    covers_acceptance: "ORDER BY/SKIP/LIMIT を組み合わせた結果制御が正しく機能する"
+  - id: OC9-CREATE-NODE-001
+    type: positive
+    covers_req: REQ-AGDB-005
+    covers_acceptance: "構文に含まれる句を実行できる"
+  - id: OC9-MERGE-ON-CREATE-001
+    type: positive
+    covers_req: REQ-AGDB-005
+    covers_acceptance: "MERGE 実行時に on-match/on-create セマンティクスを適用できる"
+  - id: OC9-MERGE-ON-MATCH-001
+    type: positive
+    covers_req: REQ-AGDB-005
+    covers_acceptance: "MERGE 実行時に on-match/on-create セマンティクスを適用できる"
+  - id: OC9-SET-PROPERTY-001
+    type: positive
+    covers_req: REQ-AGDB-005
+    covers_acceptance: "構文に含まれる句を実行できる"
+  - id: OC9-REMOVE-PROPERTY-001
+    type: positive
+    covers_req: REQ-AGDB-005
+    covers_acceptance: "構文に含まれる句を実行できる"
+  - id: OC9-DELETE-NODE-001
+    type: positive
+    covers_req: REQ-AGDB-005
+    covers_acceptance: "構文に含まれる句を実行できる"
+  - id: OC9-DETACH-DELETE-001
+    type: positive
+    covers_req: REQ-AGDB-005
+    covers_acceptance: "構文に含まれる句を実行できる"
+  - id: OC9-AGG-COUNT-001
+    type: positive
+    covers_req: REQ-AGDB-005
+    covers_acceptance: "UNWIND と集約関数を正しく実行できる"
+  - id: OC9-AGG-SUM-001
+    type: positive
+    covers_req: REQ-AGDB-005
+    covers_acceptance: "UNWIND と集約関数を正しく実行できる"
+  - id: OC9-AGG-AVG-001
+    type: positive
+    covers_req: REQ-AGDB-005
+    covers_acceptance: "UNWIND と集約関数を正しく実行できる"
+  - id: OC9-AGG-MIN-MAX-001
+    type: positive
+    covers_req: REQ-AGDB-005
+    covers_acceptance: "UNWIND と集約関数を正しく実行できる"
+  - id: OC9-AGG-COLLECT-001
+    type: positive
+    covers_req: REQ-AGDB-005
+    covers_acceptance: "UNWIND と集約関数を正しく実行できる"
+  - id: OC9-EXPR-PROPERTY-ACCESS-001
+    type: positive
+    covers_req: REQ-AGDB-005
+    covers_acceptance: "WHERE / WITH 内の規範式（プロパティ参照、比較、論理演算、リスト/マップリテラル）を正しく評価できる"
+  - id: OC9-EXPR-COMPARISON-001
+    type: positive
+    covers_req: REQ-AGDB-005
+    covers_acceptance: "WHERE / WITH 内の規範式（プロパティ参照、比較、論理演算、リスト/マップリテラル）を正しく評価できる"
+  - id: OC9-EXPR-BOOLEAN-LOGIC-001
+    type: positive
+    covers_req: REQ-AGDB-005
+    covers_acceptance: "WHERE / WITH 内の規範式（プロパティ参照、比較、論理演算、リスト/マップリテラル）を正しく評価できる"
+  - id: OC9-EXPR-LITERAL-LIST-MAP-001
+    type: positive
+    covers_req: REQ-AGDB-005
+    covers_acceptance: "WHERE / WITH 内の規範式（プロパティ参照、比較、論理演算、リスト/マップリテラル）を正しく評価できる"
+  - id: OC9-NO-ORDER-MULTISET-001
+    type: positive
+    covers_req: REQ-AGDB-005
+    covers_acceptance: "ORDER BY なしの read クエリは multiset 同値で検証できる"
+  - id: OC9-SYNTAX-ERROR-CODE-001
+    type: negative
+    covers_req: REQ-AGDB-005
+    covers_acceptance: "構文エラー時に標準化エラーコードを返す"
+  - id: OC9-UNSUPPORTED-FEATURE-ATOMICITY-001
+    type: negative
+    covers_req: REQ-AGDB-006
+    covers_acceptance: "準拠範囲外句を含むクエリは部分更新を起こさない"
+  - id: OC9-UNSUPPORTED-FEATURE-CODE-001
+    type: negative
+    covers_req: REQ-AGDB-006
+    covers_acceptance: "準拠範囲外句に対して UNSUPPORTED_FEATURE を返す"
+  - id: OC9-UNSUPPORTED-FEATURE-MESSAGE-001
+    type: negative
+    covers_req: REQ-AGDB-006
+    covers_acceptance: "エラーメッセージに非対応句名を含む"
+  - id: OC9-UNSUPPORTED-FEATURE-DETAILS-CLAUSE-001
+    type: negative
+    covers_req: REQ-AGDB-006
+    covers_acceptance: "details.unsupported_clause に非対応句名を含む"
+  - id: OC9-MANIFEST-UNCLASSIFIED-FEATURE-FAIL-001
+    type: negative
+    covers_req: REQ-AGDB-018
+    covers_acceptance: "マニフェストが coverage_mode=closed_world を定義し、未分類機能をリリース失敗として扱う"
+  - id: OC9-MANIFEST-COUNT-MISMATCH-FAIL-001
+    type: negative
+    covers_req: REQ-AGDB-018
+    covers_acceptance: "マニフェスト内 normative_feature_count と classified_normative_feature_count が一致しない場合にリリースを失敗させる"
+  - id: OC9-MANIFEST-NORMATIVE-NONREQUIRED-FAIL-001
+    type: negative
+    covers_req: REQ-AGDB-018
+    covers_acceptance: "full-support スコープで規範機能を non-required として分類した場合にリリースを失敗させる"
+  - id: OC9-UNSUPPORTED-EXT-CALL-001
+    type: negative
+    covers_req: REQ-AGDB-006
+    covers_acceptance: "準拠範囲外句に対して UNSUPPORTED_FEATURE を返す"
+  - id: OC9-UNSUPPORTED-EXT-VENDOR-PROCEDURE-001
+    type: negative
+    covers_req: REQ-AGDB-006
+    covers_acceptance: "準拠範囲外句に対して UNSUPPORTED_FEATURE を返す"
+  - id: OC9-UNSUPPORTED-EXT-APOC-001
+    type: negative
+    covers_req: REQ-AGDB-006
+    covers_acceptance: "準拠範囲外句に対して UNSUPPORTED_FEATURE を返す"

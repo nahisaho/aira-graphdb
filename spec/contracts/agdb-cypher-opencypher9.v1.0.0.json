@@ -1,0 +1,91 @@
+{
+  "spec_id": "AGDB-CYPHER-OPENCYPHER9@1.0.0",
+  "full_support": true,
+  "scope": "openCypher 9 full-support",
+  "coverage_mode": "closed_world",
+  "snapshot_ref": "4f9c2e7a18bb3c4e92b561a8d3ef1c7e5b2a9d10",
+  "upstream_normative_total_count": 25,
+  "extracted_normative_hash": "sha256:8f53f4b04f8c3a1f4d733b2f7bc1d9d28f0b9bf5dc3428f8f393b4df1db86e9a",
+  "normative_source": {
+    "type": "upstream_tck_snapshot",
+    "file": "spec/conformance/opencypher9-tck-required.yaml"
+  },
+  "normative_feature_count": 25,
+  "classified_feature_count": 28,
+  "classified_normative_feature_count": 25,
+  "covers_tck_ids": [
+    "TCK-SYNTAX-001",
+    "TCK-SYNTAX-002",
+    "TCK-MATCH-001",
+    "TCK-MATCH-002",
+    "TCK-OPTIONAL-MATCH-001",
+    "TCK-WHERE-001",
+    "TCK-WITH-001",
+    "TCK-UNWIND-001",
+    "TCK-RETURN-001",
+    "TCK-ORDER-BY-001",
+    "TCK-SKIP-LIMIT-001",
+    "TCK-CREATE-001",
+    "TCK-MERGE-001",
+    "TCK-SET-REMOVE-001",
+    "TCK-DELETE-001",
+    "TCK-DETACH-DELETE-001",
+    "TCK-AGG-COUNT-001",
+    "TCK-AGG-SUM-001",
+    "TCK-AGG-AVG-001",
+    "TCK-AGG-MIN-MAX-001",
+    "TCK-AGG-COLLECT-001",
+    "TCK-EXPR-PROPERTY-ACCESS-001",
+    "TCK-EXPR-COMPARISON-001",
+    "TCK-EXPR-BOOLEAN-LOGIC-001",
+    "TCK-EXPR-LITERAL-LIST-MAP-001"
+  ],
+  "features": [
+    { "feature_id": "CLAUSE-MATCH", "kind": "clause", "normative": true, "status": "required" },
+    { "feature_id": "CLAUSE-OPTIONAL-MATCH", "kind": "clause", "normative": true, "status": "required" },
+    { "feature_id": "CLAUSE-WHERE", "kind": "clause", "normative": true, "status": "required" },
+    { "feature_id": "CLAUSE-WITH", "kind": "clause", "normative": true, "status": "required" },
+    { "feature_id": "CLAUSE-UNWIND", "kind": "clause", "normative": true, "status": "required" },
+    { "feature_id": "CLAUSE-RETURN", "kind": "clause", "normative": true, "status": "required" },
+    { "feature_id": "CLAUSE-ORDER-BY", "kind": "clause", "normative": true, "status": "required" },
+    { "feature_id": "CLAUSE-SKIP", "kind": "clause", "normative": true, "status": "required" },
+    { "feature_id": "CLAUSE-LIMIT", "kind": "clause", "normative": true, "status": "required" },
+    { "feature_id": "CLAUSE-CREATE", "kind": "clause", "normative": true, "status": "required" },
+    { "feature_id": "CLAUSE-MERGE", "kind": "clause", "normative": true, "status": "required" },
+    { "feature_id": "CLAUSE-SET", "kind": "clause", "normative": true, "status": "required" },
+    { "feature_id": "CLAUSE-REMOVE", "kind": "clause", "normative": true, "status": "required" },
+    { "feature_id": "CLAUSE-DELETE", "kind": "clause", "normative": true, "status": "required" },
+    { "feature_id": "CLAUSE-DETACH-DELETE", "kind": "clause", "normative": true, "status": "required" },
+    { "feature_id": "AGG-COUNT", "kind": "function", "normative": true, "status": "required" },
+    { "feature_id": "AGG-SUM", "kind": "function", "normative": true, "status": "required" },
+    { "feature_id": "AGG-AVG", "kind": "function", "normative": true, "status": "required" },
+    { "feature_id": "AGG-MIN", "kind": "function", "normative": true, "status": "required" },
+    { "feature_id": "AGG-MAX", "kind": "function", "normative": true, "status": "required" },
+    { "feature_id": "AGG-COLLECT", "kind": "function", "normative": true, "status": "required" },
+    { "feature_id": "EXPR-PROPERTY-ACCESS", "kind": "expression", "normative": true, "status": "required" },
+    { "feature_id": "EXPR-COMPARISON", "kind": "expression", "normative": true, "status": "required" },
+    { "feature_id": "EXPR-BOOLEAN-LOGIC", "kind": "expression", "normative": true, "status": "required" },
+    { "feature_id": "EXPR-LITERAL-LIST-MAP", "kind": "expression", "normative": true, "status": "required" },
+    { "feature_id": "EXT-CALL", "kind": "extension", "normative": false, "status": "unsupported" },
+    { "feature_id": "EXT-VENDOR-PROCEDURE", "kind": "extension", "normative": false, "status": "unsupported" },
+    { "feature_id": "EXT-APOC", "kind": "extension", "normative": false, "status": "unsupported" }
+  ],
+  "classification_rule": {
+    "all_normative_features_must_be_required": true,
+    "allow_unsupported_only_for_non_normative_extensions": true
+  },
+  "release_gate": {
+    "fail_on_unclassified_feature": true,
+    "fail_on_count_mismatch": true,
+    "fail_on_tck_manifest_mismatch": true,
+    "fail_on_upstream_total_mismatch": true,
+    "fail_on_hash_mismatch": true
+  },
+  "count_validation": {
+    "check": "normative_feature_count == classified_normative_feature_count"
+  },
+  "validation_sources": [
+    "spec/conformance/opencypher9-tck-required.yaml",
+    "spec/conformance/opencypher9-required-tests.yaml"
+  ]
+}

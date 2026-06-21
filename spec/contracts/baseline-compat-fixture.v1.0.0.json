@@ -1,0 +1,37 @@
+{
+  "id": "baseline-compat-fixture.v1.0.0",
+  "version": "1.0.0",
+  "description": "Deterministic dataset and query set for baseline compatibility checks.",
+  "baselineBackend": "neo4j",
+  "dataset": {
+    "nodeCount": 200,
+    "edgeCount": 420,
+    "memoryCount": 800,
+    "sha256": "c9aa88d6f3e3d4b8f2f5dfce2b5dc9d1f2af2ea6c87e3c7c3d38c76f1d02fa22"
+  },
+  "querySetId": "baseline-query-set.v1.0.0",
+  "querySet": {
+    "vectorQueries": 40,
+    "lexicalQueries": 40
+  },
+  "comparisonRules": {
+    "vector": {
+      "matchRateRequired": 1.0,
+      "strictExactForP0": true,
+      "minimumRecallAtK": 1.0,
+      "thresholdRule": "threshold specified => compare after threshold filter",
+      "normalization": {
+        "scoreRoundingDecimals": 6,
+        "thresholdEpsilon": 0.000001
+      }
+    },
+    "lexical": {
+      "sortRule": {
+        "orderBy": [
+          { "field": "score", "order": "desc" },
+          { "field": "documentId", "order": "asc" }
+        ]
+      }
+    }
+  }
+}

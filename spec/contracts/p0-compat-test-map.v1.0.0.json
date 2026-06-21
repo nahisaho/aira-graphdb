@@ -1,0 +1,55 @@
+{
+  "id": "p0-compat-test-map.v1.0.0",
+  "version": "1.0.0",
+  "requiredMappings": [
+    {
+      "useCaseId": "AGDB-P0-UC-001",
+      "testId": "storage-port-compat:graph-crud"
+    },
+    {
+      "useCaseId": "AGDB-P0-UC-002",
+      "testId": "storage-port-compat:vector-crud"
+    },
+    {
+      "useCaseId": "AGDB-P0-UC-003",
+      "testId": "storage-port-compat:lexical-search"
+    },
+    {
+      "useCaseId": "AGDB-P0-UC-004",
+      "testId": "storage-port-compat:memory-crud"
+    },
+    {
+      "useCaseId": "AGDB-P0-UC-005",
+      "testId": "storage-port-compat:projection"
+    },
+    {
+      "useCaseId": "AGDB-P0-UC-006",
+      "testId": "backend-compat:routing-and-fallback"
+    }
+  ],
+  "baselineComparison": {
+    "baselineBackend": "neo4j",
+    "datasetContract": "baseline-compat-fixture.v1.0.0",
+    "datasetSha256": "c9aa88d6f3e3d4b8f2f5dfce2b5dc9d1f2af2ea6c87e3c7c3d38c76f1d02fa22",
+    "querySetId": "baseline-query-set.v1.0.0",
+    "matchRule": {
+      "vector": "topK documentId set equality; threshold specified => compare after threshold filter",
+      "lexical": {
+        "orderBy": [
+          { "field": "score", "order": "desc" },
+          { "field": "documentId", "order": "asc" }
+        ]
+      }
+    }
+  },
+  "contractReferences": {
+    "storagePorts": "aira-synapse-storage-ports.v1.0.0",
+    "errorCodes": "AGDB-ERROR-CODES@1.0.0",
+    "branchProtection": "branch-protection-policy.v1.0.0"
+  },
+  "passCriteria": {
+    "allUseCasesCovered": true,
+    "oneToOneMapping": true,
+    "baselineMatchRate": 1.0
+  }
+}

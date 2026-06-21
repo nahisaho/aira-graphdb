@@ -1,0 +1,6 @@
+{
+  "spec_id": "AGDB-CYPHER-P0-GRAMMAR@1.0.0",
+  "read_only_clauses": ["MATCH", "WHERE", "RETURN"],
+  "write_clauses": ["CREATE", "MERGE", "DELETE", "SET"],
+  "unsupported_behavior": "UNSUPPORTED_FEATURE"
+}

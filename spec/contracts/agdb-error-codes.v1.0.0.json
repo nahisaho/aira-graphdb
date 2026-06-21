@@ -1,0 +1,70 @@
+{
+  "spec_id": "AGDB-ERROR-CODES@1.0.0",
+  "codes": [
+    {
+      "code": "PROTOCOL_VERSION_MISMATCH",
+      "category": "protocol",
+      "description": "Client protocol/canonical type version does not match supported contract."
+    },
+    {
+      "code": "UNSUPPORTED_FEATURE",
+      "category": "query",
+      "description": "Query contains clause outside AGDB-CYPHER-P0-GRAMMAR@1.0.0."
+    },
+    {
+      "code": "RETRYABLE_CONFLICT",
+      "category": "transaction",
+      "description": "Transaction conflict detected under serializable isolation."
+    },
+    {
+      "code": "WRITE_LOCK_CONFLICT",
+      "category": "storage",
+      "description": "Write lock already held by another process for the same DB file."
+    },
+    {
+      "code": "INCOMPATIBLE_FORMAT",
+      "category": "storage",
+      "description": "Database file format version is not compatible with current runtime."
+    },
+    {
+      "code": "AUTH_REQUIRED",
+      "category": "auth",
+      "description": "Authentication is required before executing requests."
+    },
+    {
+      "code": "AUTH_FAILED",
+      "category": "auth",
+      "description": "Authentication failed due to signature/claims/policy validation."
+    },
+    {
+      "code": "REFERENTIAL_INTEGRITY_VIOLATION",
+      "category": "integrity",
+      "description": "Node delete/update violates edge referential integrity constraints."
+    },
+    {
+      "code": "INVALID_ARGUMENT",
+      "category": "validation",
+      "description": "One or more request arguments are invalid."
+    },
+    {
+      "code": "INVALID_TOP_K",
+      "category": "validation",
+      "description": "topK must be an integer greater than 0."
+    },
+    {
+      "code": "INVALID_THRESHOLD",
+      "category": "validation",
+      "description": "threshold must be within [0.0, 1.0]."
+    },
+    {
+      "code": "INVALID_CORPUS_ID",
+      "category": "validation",
+      "description": "corpusId is missing or malformed."
+    },
+    {
+      "code": "INVALID_NAMESPACE",
+      "category": "validation",
+      "description": "namespace is missing or malformed."
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "profile_read": "P0-NATIVE-READ",
+  "profile_write": "P0-NATIVE-WRITE",
+  "rounds": 3,
+  "thresholds_ms": {
+    "get_node_p95_ms": 5.0,
+    "get_adjacent_p95_ms": 10.0,
+    "vector_search_p95_ms": 30.0,
+    "lexical_search_p95_ms": 30.0,
+    "write_api_p95_ms": 25.0,
+    "write_10k_total_ms": 8000.0
+  },
+  "metrics_ms": {
+    "get_node_p95_ms": 0.000847,
+    "get_adjacent_p95_ms": 0.0008139999999999999,
+    "vector_search_p95_ms": 0.226083,
+    "lexical_search_p95_ms": 0.234256,
+    "write_api_p95_ms": 0.039075,
+    "write_10k_total_ms": 3.205234
+  },
+  "gate_pass": true
+}

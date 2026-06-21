@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "backend-compat-failure-report.v1.0.0",
+  "title": "BackendCompatReportUnion",
+  "oneOf": [
+    {
+      "type": "object",
+      "required": ["backend", "status"],
+      "properties": {
+        "backend": { "enum": ["sqlite", "ladybug", "neo4j", "aira-graphdb"] },
+        "status": { "const": "pass" }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "backend",
+        "status",
+        "errorCode",
+        "failedCompatibilityTestIds"
+      ],
+      "properties": {
+        "backend": { "enum": ["sqlite", "ladybug", "neo4j", "aira-graphdb"] },
+        "status": { "const": "fail" },
+        "errorCode": {
+          "enum": [
+            "PROTOCOL_VERSION_MISMATCH",
+            "UNSUPPORTED_FEATURE",
+            "RETRYABLE_CONFLICT",
+            "WRITE_LOCK_CONFLICT",
+            "INCOMPATIBLE_FORMAT",
+            "AUTH_REQUIRED",
+            "AUTH_FAILED",
+            "REFERENTIAL_INTEGRITY_VIOLATION",
+            "INVALID_ARGUMENT",
+            "INVALID_TOP_K",
+            "INVALID_THRESHOLD",
+            "INVALID_CORPUS_ID",
+            "INVALID_NAMESPACE"
+          ]
+        },
+        "failedCompatibilityTestIds": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+      ,
+      "additionalProperties": false
+    }
+  ]
+}

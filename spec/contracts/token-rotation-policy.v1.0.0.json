@@ -1,0 +1,22 @@
+{
+  "id": "token-rotation-policy.v1.0.0",
+  "version": "1.0.0",
+  "repository": "nahisaho/aira-synapse",
+  "tokenPolicy": {
+    "secretName": "AIRA_SYNAPSE_ADMIN_TOKEN",
+    "maxAgeDays": 90,
+    "evidenceSource": "repository-metadata-file",
+    "evidencePath": "nahisaho/aira-synapse:.github/security/token-rotation-metadata.json",
+    "signatureRequired": true,
+    "signature": {
+      "algorithm": "Ed25519",
+      "keyId": "token-rotation-ed25519-v1",
+      "publicKeySource": "nahisaho/aira-graphdb:spec/contracts/keys/token-rotation-ed25519.pub",
+      "keyRotationDays": 365
+    },
+    "requiredFields": ["lastRotatedAt", "owner", "scope", "signature"],
+    "signedFields": ["lastRotatedAt", "owner", "scope"],
+    "verificationProcedure": "ed25519-verify(payload=signedFields, signature, publicKeySource)",
+    "immutableBaselineRef": "nahisaho/aira-graphdb:refs/tags/contracts-v1"
+  }
+}
