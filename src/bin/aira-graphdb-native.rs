@@ -714,6 +714,27 @@ impl Server {
                     .map_err(|err| Self::execution_io_error(format!("persist failed: {err}")))?;
                 Ok(json!(null))
             }
+            "memory_save_file" => {
+                let file_path = req.params.get("filePath")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| Self::execution_client_error("missing filePath".to_string()))?;
+                let file_content = std::fs::read_to_string(file_path)
+                    .map_err(|err| Self::execution_io_error(format!("read file {file_path}: {err}")))?;
+                let snapshot: Value = serde_json::from_str(&file_content)
+                    .map_err(|err| Self::execution_client_error(format!("parse JSON {file_path}: {err}")))?;
+                let corpus_id = snapshot
+                    .get("corpusId")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| Self::execution_client_error("missing snapshot.corpusId".to_string()))?
+                    .to_string();
+                let facts_count = snapshot.get("facts").and_then(Value::as_array).map(|a| a.len()).unwrap_or(0);
+                let passages_count = snapshot.get("passages").and_then(Value::as_array).map(|a| a.len()).unwrap_or(0);
+                eprintln!("[memory_save_file] Loading {file_path}: {facts_count} facts, {passages_count} passages");
+                self.state.snapshots.insert(corpus_id, snapshot);
+                self.persist_if_needed()
+                    .map_err(|err| Self::execution_io_error(format!("persist failed: {err}")))?;
+                Ok(json!({ "facts": facts_count, "passages": passages_count }))
+            }
             "memory_load" => {
                 let corpus_id = req.params.get("corpusId").and_then(Value::as_str).unwrap_or_default();
                 let snapshot = self.state.snapshots.get(corpus_id).cloned().unwrap_or_else(|| {
