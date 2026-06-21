@@ -82,7 +82,10 @@ impl ServerRuntime {
     }
 }
 
-fn validate_server_profile(profile: Option<&str>, active_connections: usize) -> Result<(), GraphDbError> {
+fn validate_server_profile(
+    profile: Option<&str>,
+    active_connections: usize,
+) -> Result<(), GraphDbError> {
     if profile == Some("P0-SERVER-CONCURRENCY") && active_connections < 32 {
         return Err(GraphDbError::new(
             ErrorCode::UnsupportedFeature,

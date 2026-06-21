@@ -109,8 +109,10 @@ pub struct Neo4jCompatConformanceReport {
 }
 
 pub fn load_required_tests_spec() -> RequiredTestsSpec {
-    serde_yaml::from_str(include_str!("../spec/conformance/opencypher9-required-tests.yaml"))
-        .expect("opencypher9 required tests YAML must be valid")
+    serde_yaml::from_str(include_str!(
+        "../spec/conformance/opencypher9-required-tests.yaml"
+    ))
+    .expect("opencypher9 required tests YAML must be valid")
 }
 
 pub fn load_manifest_spec() -> ManifestSpec {
@@ -209,7 +211,11 @@ pub fn validate_required_negative_cases(required: &RequiredTestsSpec) -> Result<
         "OC9-MANIFEST-NORMATIVE-NONREQUIRED-FAIL-001",
         "OC9-TCK-SNAPSHOT-REF-SHA-001",
     ];
-    let ids: HashSet<&str> = required.required_tests.iter().map(|t| t.id.as_str()).collect();
+    let ids: HashSet<&str> = required
+        .required_tests
+        .iter()
+        .map(|t| t.id.as_str())
+        .collect();
     for id in must_have {
         if !ids.contains(id) {
             return Err(GraphDbError::new(
@@ -248,7 +254,10 @@ pub fn validate_neo4j_compat_manifest_schema(
     if manifest.manifest_id != "agdb-cypher-neo4j-compat.v1.0.0" {
         return Err(GraphDbError::new(
             ErrorCode::UnsupportedFeature,
-            format!("neo4j compat manifest_id mismatch: {}", manifest.manifest_id),
+            format!(
+                "neo4j compat manifest_id mismatch: {}",
+                manifest.manifest_id
+            ),
         ));
     }
     if manifest.baseline_mode != "closed_world" {
@@ -296,7 +305,10 @@ pub fn validate_neo4j_compat_manifest_schema(
         if feature.covers_req.is_empty() || feature.covers_acceptance.is_empty() {
             return Err(GraphDbError::new(
                 ErrorCode::UnsupportedFeature,
-                format!("neo4j compat feature coverage missing: {}", feature.feature_id),
+                format!(
+                    "neo4j compat feature coverage missing: {}",
+                    feature.feature_id
+                ),
             ));
         }
     }
@@ -321,13 +333,19 @@ pub fn validate_neo4j_compat_feature_coverage(
         if !feature.covers_req.iter().any(|req| req == "REQ-AGDB-024") {
             return Err(GraphDbError::new(
                 ErrorCode::UnsupportedFeature,
-                format!("required feature missing REQ-AGDB-024 coverage: {}", feature.feature_id),
+                format!(
+                    "required feature missing REQ-AGDB-024 coverage: {}",
+                    feature.feature_id
+                ),
             ));
         }
         if feature.covers_acceptance.is_empty() {
             return Err(GraphDbError::new(
                 ErrorCode::UnsupportedFeature,
-                format!("required feature missing acceptance coverage: {}", feature.feature_id),
+                format!(
+                    "required feature missing acceptance coverage: {}",
+                    feature.feature_id
+                ),
             ));
         }
     }
@@ -336,13 +354,19 @@ pub fn validate_neo4j_compat_feature_coverage(
         if !feature.covers_req.iter().any(|req| req == "REQ-AGDB-025") {
             return Err(GraphDbError::new(
                 ErrorCode::UnsupportedFeature,
-                format!("unsupported feature missing REQ-AGDB-025 coverage: {}", feature.feature_id),
+                format!(
+                    "unsupported feature missing REQ-AGDB-025 coverage: {}",
+                    feature.feature_id
+                ),
             ));
         }
         if feature.covers_acceptance.is_empty() {
             return Err(GraphDbError::new(
                 ErrorCode::UnsupportedFeature,
-                format!("unsupported feature missing acceptance coverage: {}", feature.feature_id),
+                format!(
+                    "unsupported feature missing acceptance coverage: {}",
+                    feature.feature_id
+                ),
             ));
         }
     }
@@ -393,7 +417,10 @@ pub fn validate_neo4j_compat_feature_coverage(
         "LOAD CSV",
     ];
     for expected in expected_unsupported_clauses {
-        if !unsupported_features.iter().any(|feature| feature.clause == expected) {
+        if !unsupported_features
+            .iter()
+            .any(|feature| feature.clause == expected)
+        {
             return Err(GraphDbError::new(
                 ErrorCode::UnsupportedFeature,
                 format!("unsupported clause missing from manifest: {expected}"),
@@ -409,10 +436,7 @@ pub fn run_neo4j_compat_governance_checks() -> Result<(), GraphDbError> {
     if let Some(failed) = check_results.iter().find(|check| check.status == "FAIL") {
         return Err(GraphDbError::new(
             ErrorCode::UnsupportedFeature,
-            format!(
-                "neo4j compat governance check failed: {}",
-                failed.check_id
-            ),
+            format!("neo4j compat governance check failed: {}", failed.check_id),
         ));
     }
     Ok(())
@@ -446,7 +470,8 @@ pub fn build_and_persist_neo4j_compat_conformance_report(
     Ok(report)
 }
 
-pub fn build_neo4j_compat_conformance_report() -> Result<Neo4jCompatConformanceReport, GraphDbError> {
+pub fn build_neo4j_compat_conformance_report() -> Result<Neo4jCompatConformanceReport, GraphDbError>
+{
     let required = load_neo4j_compat_required_spec();
     let manifest = load_neo4j_compat_manifest();
     let check_results = evaluate_neo4j_compat_governance_checks()?;
@@ -503,15 +528,27 @@ fn evaluate_neo4j_compat_governance_checks() -> Result<Vec<GateCheckResult>, Gra
 
     match validate_neo4j_compat_manifest_schema(&manifest) {
         Ok(()) => results.push(gate_result("manifest_schema_valid", "PASS", None)),
-        Err(err) => results.push(gate_result("manifest_schema_valid", "FAIL", Some(err.message))),
+        Err(err) => results.push(gate_result(
+            "manifest_schema_valid",
+            "FAIL",
+            Some(err.message),
+        )),
     }
 
     match validate_neo4j_compat_feature_coverage(&manifest) {
         Ok(()) => results.push(gate_result("feature_coverage_valid", "PASS", None)),
-        Err(err) => results.push(gate_result("feature_coverage_valid", "FAIL", Some(err.message))),
+        Err(err) => results.push(gate_result(
+            "feature_coverage_valid",
+            "FAIL",
+            Some(err.message),
+        )),
     }
 
-    let required_ids: HashSet<&str> = required.required_test_ids.iter().map(String::as_str).collect();
+    let required_ids: HashSet<&str> = required
+        .required_test_ids
+        .iter()
+        .map(String::as_str)
+        .collect();
     for test_id in [
         "NEO4J-COMPAT-RUN-001",
         "NEO4J-COMPAT-RUN-002",
@@ -540,7 +577,11 @@ fn evaluate_neo4j_compat_governance_checks() -> Result<Vec<GateCheckResult>, Gra
     ] {
         results.push(gate_result(
             check,
-            if required.governance_checks.iter().any(|value| value == check) {
+            if required
+                .governance_checks
+                .iter()
+                .any(|value| value == check)
+            {
                 "PASS"
             } else {
                 "FAIL"
@@ -550,12 +591,24 @@ fn evaluate_neo4j_compat_governance_checks() -> Result<Vec<GateCheckResult>, Gra
     }
 
     match validate_neo4j_compat_unsupported_clauses() {
-        Ok(()) => results.push(gate_result("unsupported_clauses_return_unsupported_feature", "PASS", None)),
-        Err(err) => results.push(gate_result("unsupported_clauses_return_unsupported_feature", "FAIL", Some(err.message))),
+        Ok(()) => results.push(gate_result(
+            "unsupported_clauses_return_unsupported_feature",
+            "PASS",
+            None,
+        )),
+        Err(err) => results.push(gate_result(
+            "unsupported_clauses_return_unsupported_feature",
+            "FAIL",
+            Some(err.message),
+        )),
     }
     match validate_neo4j_compat_subquery_clauses() {
         Ok(()) => results.push(gate_result("subquery_clauses_execute", "PASS", None)),
-        Err(err) => results.push(gate_result("subquery_clauses_execute", "FAIL", Some(err.message))),
+        Err(err) => results.push(gate_result(
+            "subquery_clauses_execute",
+            "FAIL",
+            Some(err.message),
+        )),
     }
     Ok(results)
 }
@@ -573,7 +626,9 @@ pub fn run_conformance_governance_checks() -> Result<(), GraphDbError> {
     Ok(())
 }
 
-pub fn build_and_persist_conformance_report(path: impl AsRef<Path>) -> Result<ConformanceReport, GraphDbError> {
+pub fn build_and_persist_conformance_report(
+    path: impl AsRef<Path>,
+) -> Result<ConformanceReport, GraphDbError> {
     let report = build_conformance_report()?;
     let path_ref = path.as_ref();
     if let Some(parent) = path_ref.parent() {
@@ -690,13 +745,19 @@ fn run_clause_probes() -> Vec<ClauseConformanceResult> {
         ("OPTIONAL-MATCH", "OPTIONAL MATCH (n) RETURN n"),
         ("WITH", "MATCH (n) WITH n RETURN n"),
         ("UNWIND", "UNWIND [1,2,3] AS x RETURN count(x)"),
-        ("EXISTS", "MATCH (n) WHERE EXISTS { MATCH (m) RETURN m } RETURN n"),
+        (
+            "EXISTS",
+            "MATCH (n) WHERE EXISTS { MATCH (m) RETURN m } RETURN n",
+        ),
         ("CALL {", "CALL { MATCH (n) RETURN n } RETURN count(*)"),
         ("ORDER-BY", "MATCH (n) RETURN n ORDER BY n.id"),
         ("SKIP", "MATCH (n) RETURN n ORDER BY n.id SKIP 0"),
         ("LIMIT", "MATCH (n) RETURN n ORDER BY n.id LIMIT 1"),
         ("CREATE", "CREATE (n:Paper)"),
-        ("MERGE", "MERGE (n:Paper {title='A'}) ON CREATE SET n.status='new'"),
+        (
+            "MERGE",
+            "MERGE (n:Paper {title='A'}) ON CREATE SET n.status='new'",
+        ),
         ("SET", "SET NODE n1 title='Graph'"),
         ("REMOVE", "REMOVE NODE n1 title"),
     ];
@@ -807,10 +868,16 @@ fn gate_result(check_id: &str, status: &str, detail: Option<String>) -> GateChec
 fn validate_neo4j_compat_unsupported_clauses() -> Result<(), GraphDbError> {
     let cases = [
         ("FOREACH (x IN [1] | CREATE (n:Probe {value:x}))", "FOREACH"),
-        ("MATCH p=shortestPath((a)-[*]->(b)) RETURN p", "shortestPath"),
+        (
+            "MATCH p=shortestPath((a)-[*]->(b)) RETURN p",
+            "shortestPath",
+        ),
         ("MATCH p=(a)-[*1..3]->(b) RETURN p", "variable-length path"),
         ("RETURN [(n)-->(m) | m]", "pattern comprehension"),
-        ("LOAD CSV FROM 'file:///tmp.csv' AS row RETURN row", "LOAD CSV"),
+        (
+            "LOAD CSV FROM 'file:///tmp.csv' AS row RETURN row",
+            "LOAD CSV",
+        ),
     ];
 
     for (query, expected_clause) in cases {

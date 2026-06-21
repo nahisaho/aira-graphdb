@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::contracts::{load_error_code_spec, ErrorCodeSpec, ERROR_SPEC_ID};
+use crate::contracts::{ERROR_SPEC_ID, ErrorCodeSpec, load_error_code_spec};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ErrorCode {

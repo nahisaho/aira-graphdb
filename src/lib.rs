@@ -1,8 +1,8 @@
-pub mod auth;
 pub mod audit;
+pub mod auth;
 pub mod bench;
-pub mod contracts;
 pub mod conformance;
+pub mod contracts;
 pub mod errors;
 pub mod graph;
 pub mod lock;

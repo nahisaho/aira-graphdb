@@ -3,12 +3,12 @@
 | フィールド | 値 |
 |-----------|---|
 | **ID** | DES-AIRA-GRAPHDB-001 |
-| **バージョン** | 1.7 |
+| **バージョン** | 2.0 |
 | **ステータス** | Draft |
 | **作成日** | 2026-06-20 |
-| **更新日** | 2026-06-21 |
-| **要件参照** | `spec/REQ-AIRA-GRAPHDB-001.md` (v1.9) |
-| **対象バージョン** | v0.2.0 |
+| **更新日** | 2026-06-22 |
+| **要件参照** | `spec/REQ-AIRA-GRAPHDB-001.md` (v2.0) |
+| **対象バージョン** | v0.3.0 |
 
 ## 0. 実行コンテキスト（受入試験）
 
@@ -95,7 +95,7 @@ flowchart LR
 - `aira-synapse` 互換の storage-port adapter 境界（`IGraphStore/IVectorIndex/IMemoryStore/IGraphProjection/ILexicalRetriever`）を Interface 層に配置し、契約テストで固定する。
 - vector/lexical 互換評価器を Application 層に配置し、`memoryType=passage|fact` の統合結果スキーマ、score 降順・同点時 documentId 昇順、baseline backend（neo4j）との集合一致を検証可能にする。
 - backend ルーティング/フォールバック戦略（`sqlite|ladybug|neo4j|aira-graphdb`）と失敗時の固定エラーコード写像を Infrastructure 層で実装する。
-- CI release-block 設計として `.github/workflows/aira-synapse-backend-compat.yml` の `backend-compat` を Required Check にし、失敗レポートの最小スキーマを `{ errorCode, failedCompatibilityTestId }` とする。
+- CI release-block 設計として `.github/workflows/aira-synapse-backend-compat.yml` の `backend-compat` を Required Check にし、失敗レポートの最小スキーマを `{ errorCode, failedCompatibilityTestIds[] }`（非空配列）とする。
 
 ```ts
 export type NodeId = string;
@@ -477,6 +477,7 @@ export interface PortErrorMapper {
 - ベクトル互換は `upsert/search/deleteByDocument` の3操作を対象にし、`search` では `corpusId/namespace/topK` を必須、`threshold` は任意（指定時のみ適用）として評価する。
 - 全文検索は `memoryType=passage|fact` を統合し、返却スキーマを `documentId/text/score/memoryType` に固定する。
 - ランキング規則は `score DESC, documentId ASC` を固定し、同一データセット比較で再現可能にする。
+- `REQ-AGDB-020` の baseline 一致検証は `vector_search_mode=exact_compat` のみで実行し、ANN モード評価とは分離する。
 - 不正な `topK/threshold/corpusId/namespace` は validator で拒否し、`AGDB-ERROR-CODES@1.0.0` の固定エラーコードへ写像する。
 - negative test は `tests/integration/vector-lexical-negative.spec.ts` で固定し、各不正入力ケースのエラーコード一致を必須にする。
 - baseline backend（neo4j）比較では `matchRate === 1.0`（`threshold` 指定時は適用後集合）を必須とし、逸脱時は CI fail とする。
@@ -493,7 +494,13 @@ export interface VectorCompatEvaluator {
   }): Promise<void>;
   compareTopK(
     query: string,
-    options: { corpusId: string; namespace: string; topK: number; threshold?: number }
+    options: {
+      corpusId: string;
+      namespace: string;
+      topK: number;
+      threshold?: number;
+      mode: "exact_compat" | "hnsw_ann";
+    }
   ): Promise<{ baselineSet: string[]; candidateSet: string[]; matchRate: number }>;
   deleteByDocument(input: { corpusId: string; namespace: string; documentId: string }): Promise<void>;
   assertDeleted(documentId: string, options: { corpusId: string; namespace: string }): Promise<void>;
@@ -563,18 +570,22 @@ export interface P0CoverageGate {
 
 **設計概要**:
 - Native sidecar の state 永続化は「1 API リクエスト = 1 原子的永続化単位」を満たすよう write path を設計する。
-- write path は全量 pretty-print 書込みを避け、差分ログ + 原子的ファイル置換（temp file + rename）で障害耐性とスループットを両立する。
+- 通常 COMMIT write path は全量 pretty-print 書込みを避け、差分 WAL 追記を標準経路とする。
+- 原子的ファイル置換（temp file + rename）は checkpoint/compaction 経路に限定して適用する。
 - read path はノード/エッジ/ベクトル/全文索引でメモリ常駐インデックスを維持し、`get_node/get_adjacent/vector_search/lexical_search` の P95 目標を満たす。
 - `P0-NATIVE-READ` / `P0-NATIVE-WRITE` ベンチは固定条件（データ規模、同時接続、ウォームアップ、測定回数）で実行し、結果を CI アーティファクト化する。
-- 書込み成功応答（ack）は `temp file write -> file fsync -> atomic rename -> directory fsync` 完了後にのみ返す。
+- 通常 COMMIT（delta WAL）成功応答（ack）は `append WAL -> WAL fsync` 完了後にのみ返す。
+- checkpoint/compaction 経路の成功応答（ack）は `temp file write -> file fsync -> atomic rename -> directory fsync` 完了後にのみ返す。
 - CI では NF-003/NF-004 のしきい値を満たさない場合に bench ジョブを fail し、release をブロックする。
 
 ```ts
 export interface NativeWriteDurabilityPolicy {
   atomicUnit: "per_request";
-  persistStrategy: "tempfile_rename";
+  commitPersistStrategy: "delta_wal_append";
+  checkpointPersistStrategy: "tempfile_rename";
   crashSafety: "committed_all_or_uncommitted_none";
-  ackAfter: "file_fsync_and_rename_and_dir_fsync";
+  commitAckAfter: "wal_append_and_wal_fsync";
+  checkpointAckAfter: "file_fsync_and_rename_and_dir_fsync";
   faultInjection: "kill_after_write_before_ack";
 }
 
@@ -848,6 +859,214 @@ export interface Neo4jCompatReleaseGate {
 
 **CLI契約**: `cargo test --test cypher_neo4j_compat -- --nocapture`
 
+---
+
+### DES-AGDB-018: 外部バイナリベクトル格納設計
+
+**トレーサビリティ**: REQ-AGDB-026  
+**パッケージ**: `packages/aira-graphdb`
+
+**設計概要**:
+- ベクトル本体は snapshot 本体から分離し、`VectorBlobStore` に固定長バイナリブロックとして格納する。
+- snapshot 側は `vector_id -> blob_ref` の参照メタデータのみ保持し、`f64[]` の直接埋め込みを禁止する。
+- 容量比較は `P0-VECTOR-STORAGE-SIZE-BENCH@1.0.0` で固定し、`snapshot + vector blob + wal` 総容量を計測する。
+- 書込み途中障害に備え、blob write は `temp + fsync + rename` の原子置換で確定し、dangling 参照を GC 検査で拒否する。
+
+```ts
+export interface VectorBlobRef {
+  blobFileId: string;
+  byteOffset: number;
+  byteLength: number;
+  checksum: string;
+}
+
+export interface VectorBlobStore {
+  put(vectorId: string, values: Float64Array): Promise<VectorBlobRef>;
+  get(ref: VectorBlobRef): Promise<Float64Array>;
+  verify(ref: VectorBlobRef): Promise<void>;
+}
+
+export interface SnapshotVectorMetadata {
+  vectorId: string;
+  corpusId: string;
+  namespace: string;
+  blobRef: VectorBlobRef;
+}
+```
+
+**CLI契約**: `cargo run -p aira-graphdb -- db size-report --profile P0-VECTOR-STORAGE-SIZE-BENCH@1.0.0 --file <path>`
+
+---
+
+### DES-AGDB-019: HNSW ANN 実行設計
+
+**トレーサビリティ**: REQ-AGDB-027  
+**パッケージ**: `packages/aira-graphdb`
+
+**設計概要**:
+- `vector_search_mode` を `exact_compat | hnsw_ann` に分離し、互換モードと性能モードの検証境界を固定する。
+- `exact_compat` は exact brute-force 実行を必須とし、REQ-AGDB-020 の baseline 集合一致判定に使用する。
+- `hnsw_ann` が無効化・未初期化・利用不可の場合は必ず `exact_compat` へフォールバックする。
+- `hnsw_ann` では HNSW グラフを namespace/corpus 単位で構築し、更新時は incremental insert と background rebuild を併用する。
+- 評価は `P0-ANN-HNSW-BENCH@1.0.0` で固定し、ground truth は同一距離関数での exact brute-force 結果を使用する。
+- Recall@10 集計は固定評価クエリ集合の平均値を採用し、P95 latency は同一ハードウェア条件で測定する。
+- ANN 検索APIは `corpusId/namespace` フィルタを必須とし、`exact_compat` フォールバック時も同一フィルタ条件を維持する。
+
+```ts
+export type VectorSearchMode = "exact_compat" | "hnsw_ann";
+
+export interface HnswIndexConfig {
+  distance: "cosine" | "l2";
+  m: number;
+  efConstruction: number;
+  efSearch: number;
+}
+
+export interface AnnSearchEngine {
+  search(
+    mode: VectorSearchMode,
+    corpusId: string,
+    namespace: string,
+    query: Float64Array,
+    topK: number
+  ): Promise<Array<{ vectorId: string; score: number }>>;
+  resolveFallbackMode(preferred: VectorSearchMode): Promise<VectorSearchMode>;
+}
+
+export interface AnnBenchmarkProfile {
+  id: "P0-ANN-HNSW-BENCH@1.0.0";
+  minVectors: 100000;
+  dimension: number;
+  concurrency: 8;
+  distance: "cosine" | "l2";
+  querySetId: string;
+  hardwareFingerprint: string;
+  topK: 10;
+  minRecallAt10: 0.95;
+  minLatencyReductionVsExactP95: 0.5;
+}
+```
+
+**CLI契約**: `cargo run -p aira-graphdb -- bench ann-hnsw --profile P0-ANN-HNSW-BENCH@1.0.0`
+
+---
+
+### DES-AGDB-020: Cypher relationship type filter 拡張設計
+
+**トレーサビリティ**: REQ-AGDB-028  
+**パッケージ**: `packages/aira-graphdb`
+
+**設計概要**:
+- Parser に `RelationshipPattern(typeFilter?: string)` を追加し、`MATCH (n)-[r:TYPE]->(m)` の単一型フィルタを AST で表現する。
+- Binder/Planner は typeFilter を relation scan predicate に変換し、`OPTIONAL MATCH/WHERE/RETURN` 連携時も条件を維持する。
+- v0.3.0 追加範囲は `-[r:TYPE]->` のみを保証し、追加文法（例 `[:A|B]`）は既存 openCypher 準拠仕様と整合する形で段階導入する。
+- 型未存在時はエラー化せず empty row set を返す executor 契約を固定する。
+
+```ts
+export interface RelationshipPatternAst {
+  variable?: string;
+  direction: "outgoing" | "undirected";
+  typeFilter?: string;
+}
+
+export interface RelationshipScanPlan {
+  fromBinding: string;
+  toBinding: string;
+  typeFilter?: string;
+}
+
+export interface CypherRelationshipTypeFilterSupport {
+  parseSingleTypeFilter(query: string): Promise<RelationshipPatternAst>;
+}
+```
+
+**CLI契約**: `cargo run -p aira-graphdb -- query "MATCH (n)-[r:TYPE]->(m) RETURN n,r,m"`
+
+---
+
+### DES-AGDB-021: 増分 WAL 永続化フロー設計
+
+**トレーサビリティ**: REQ-AGDB-029, REQ-AGDB-007, REQ-AGDB-008  
+**パッケージ**: `packages/aira-graphdb`
+
+**設計概要**:
+- 通常 COMMIT 経路では `append delta WAL -> fsync WAL -> ack` を必須シーケンスとし、snapshot 全量書込みを実施しない。
+- Checkpoint/compaction は別経路に分離し、明示トリガー時のみ `snapshot rebuild` を許可する。
+- Recovery は `snapshot + ordered wal delta replay` で再構築し、部分反映検出時は起動失敗 + 監査記録を行う。
+- 検証指標として `100 COMMIT (no checkpoint)` で `snapshot mtime/size invariant` と `wal growth` を計測する。
+- replay 順序は `globalLsn` 単調増加と `txCommitMarker` を正とし、未コミット末尾を無視する。
+
+```ts
+export interface WalDeltaRecord {
+  txId: string;
+  globalLsn: number;
+  sequenceInTx: number;
+  txCommitMarker: boolean;
+  operations: Array<Record<string, unknown>>;
+  checksum: string;
+}
+
+export interface IncrementalPersistenceEngine {
+  commitDelta(txId: string, ops: WalDeltaRecord["operations"]): Promise<void>;
+  checkpoint(reason: "manual" | "compaction"): Promise<void>;
+  recover(): Promise<void>;
+}
+
+export interface CommitPathInvariant {
+  profile: "NO_CHECKPOINT_100_COMMITS";
+  snapshotMtimeUnchanged: boolean;
+  snapshotSizeUnchanged: boolean;
+  walMonotonicGrowth: boolean;
+}
+```
+
+**CLI契約**: `cargo run -p aira-graphdb -- db verify-incremental --profile NO_CHECKPOINT_100_COMMITS --file <path>`
+
+---
+
+### DES-AGDB-022: Entity vectors 64K 拡張設計
+
+**トレーサビリティ**: REQ-AGDB-030  
+**パッケージ**: `packages/aira-graphdb`
+
+**設計概要**:
+- `EntityVectorImporter` を追加し、64K 追加ベクトルを staged ingest（validate -> index -> commit）で投入する。
+- `vector_search_mode=hnsw_ann` で `P0-ENTITY-VECTOR-QUALITY-BENCH@1.0.0` を実行し、拡張前後の Recall@10 非劣化を評価する。
+- インポート失敗時は tx 境界で rollback し、partial ingest を残さない。
+- 追加件数・失敗件数・index 反映件数を監査イベントとして保存する。
+- 取り込み後ゲートとして `searchable_count_after - searchable_count_before == 64000`（同一 corpus/namespace）を必須検証する。
+
+```ts
+export interface EntityVectorImportRequest {
+  expectedCount: 64000;
+  corpusId: string;
+  namespace: string;
+  source: string;
+}
+
+export interface EntityVectorImportResult {
+  importedCount: number;
+  indexedCount: number;
+  searchableCountBefore: number;
+  searchableCountAfter: number;
+  rolledBack: boolean;
+}
+
+export interface EntityVectorQualityProfile {
+  id: "P0-ENTITY-VECTOR-QUALITY-BENCH@1.0.0";
+  searchMode: "hnsw_ann";
+  topK: 10;
+  distance: "cosine";
+  querySetId: "P0-ENTITY-VECTOR-QUALITY-QUERIES@1.0.0";
+  groundTruthMode: "exact_compat";
+  metric: "recall_at_10";
+  nonRegression: true;
+  profileVersionLocked: true;
+}
+```
+
+**CLI契約**: `cargo run -p aira-graphdb -- vectors import-entities --count 64000 && cargo run -p aira-graphdb -- bench entity-quality --profile P0-ENTITY-VECTOR-QUALITY-BENCH@1.0.0`
+
 ## 4. SOLID 適用
 
 - **SRP**: Runtime / Compiler / Executor / Storage / Auth / Conformance を責務分離。
@@ -858,6 +1077,6 @@ export interface Neo4jCompatReleaseGate {
 
 ## 5. 実装境界（Phase 4 への受け渡し）
 
-- 先行固定: `AGDB-CYPHER-OPENCYPHER9@1.0.0`, `AGDB-CYPHER-NEO4J-COMPAT@1.0.0`, `opencypher9-tck-required.yaml`, `cypher-neo4j-compat-required.yaml`, `AGDB-ERROR-CODES@1.0.0`
+- 先行固定: `AGDB-CYPHER-OPENCYPHER9@1.0.0`, `AGDB-CYPHER-NEO4J-COMPAT@1.0.0`, `opencypher9-tck-required.yaml`, `cypher-neo4j-compat-required.yaml`, `AGDB-ERROR-CODES@1.0.0`, `P0-ANN-HNSW-BENCH@1.0.0`, `P0-VECTOR-STORAGE-SIZE-BENCH@1.0.0`, `P0-ENTITY-VECTOR-QUALITY-BENCH@1.0.0`
 - コンパイラ系は Red→Green→Blue で句単位に段階導入する。
 - conformance gate を CI 必須ジョブとして実装完了条件に含め、openCypher 9 と Neo4j 互換ベースラインの両方を検証する。

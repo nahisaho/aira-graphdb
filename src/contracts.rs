@@ -115,8 +115,10 @@ pub struct Neo4jCompatFeatureEntry {
 }
 
 pub fn load_typemap_spec() -> TypeMapSpec {
-    serde_json::from_str(include_str!("../spec/contracts/agdb-typemap-p0.v1.0.0.json"))
-        .expect("typemap contract JSON must be valid")
+    serde_json::from_str(include_str!(
+        "../spec/contracts/agdb-typemap-p0.v1.0.0.json"
+    ))
+    .expect("typemap contract JSON must be valid")
 }
 
 pub fn load_cypher_p0_grammar_spec() -> CypherP0GrammarSpec {
@@ -154,11 +156,19 @@ pub fn load_neo4j_compat_manifest() -> Neo4jCompatManifestSpec {
     .expect("neo4j compat manifest JSON must be valid")
 }
 
-pub fn build_tck_selector_map(spec: &OpenCypher9TckRequiredSpec) -> Result<HashMap<String, String>, String> {
+pub fn build_tck_selector_map(
+    spec: &OpenCypher9TckRequiredSpec,
+) -> Result<HashMap<String, String>, String> {
     let mut map = HashMap::new();
     for entry in &spec.tck_selector_map {
-        if map.insert(entry.tck_id.clone(), entry.selector.clone()).is_some() {
-            return Err(format!("duplicate selector mapping for tck_id={}", entry.tck_id));
+        if map
+            .insert(entry.tck_id.clone(), entry.selector.clone())
+            .is_some()
+        {
+            return Err(format!(
+                "duplicate selector mapping for tck_id={}",
+                entry.tck_id
+            ));
         }
     }
 
@@ -174,7 +184,10 @@ pub fn build_tck_selector_map(spec: &OpenCypher9TckRequiredSpec) -> Result<HashM
     Ok(map)
 }
 
-pub fn resolve_tck_selector(spec: &OpenCypher9TckRequiredSpec, tck_id: &str) -> Result<String, String> {
+pub fn resolve_tck_selector(
+    spec: &OpenCypher9TckRequiredSpec,
+    tck_id: &str,
+) -> Result<String, String> {
     let map = build_tck_selector_map(spec)?;
     map.get(tck_id)
         .cloned()
@@ -189,10 +202,11 @@ mod tests {
     fn loads_typemap_contract() {
         let spec = load_typemap_spec();
         assert_eq!(spec.spec_id, TYPEMAP_SPEC_ID);
-        assert!(spec
-            .protocol_versions
-            .iter()
-            .any(|v| v == "protocol-p0@1.0.0"));
+        assert!(
+            spec.protocol_versions
+                .iter()
+                .any(|v| v == "protocol-p0@1.0.0")
+        );
         assert!(!spec.mappings.is_empty());
     }
 
@@ -208,10 +222,11 @@ mod tests {
     fn loads_error_code_contract() {
         let spec = load_error_code_spec();
         assert_eq!(spec.spec_id, ERROR_SPEC_ID);
-        assert!(spec
-            .codes
-            .iter()
-            .any(|entry| entry.code == "PROTOCOL_VERSION_MISMATCH"));
+        assert!(
+            spec.codes
+                .iter()
+                .any(|entry| entry.code == "PROTOCOL_VERSION_MISMATCH")
+        );
         assert!(spec.codes.iter().any(|entry| entry.code == "AUTH_FAILED"));
     }
 
@@ -228,7 +243,10 @@ mod tests {
     fn builds_selector_map_and_validates_all_required_ids() {
         let spec = load_opencypher9_tck_required_spec();
         let map = build_tck_selector_map(&spec).expect("selector map must be valid");
-        assert_eq!(map.get("TCK-MATCH-001").map(String::as_str), Some("TCK-MATCH-001"));
+        assert_eq!(
+            map.get("TCK-MATCH-001").map(String::as_str),
+            Some("TCK-MATCH-001")
+        );
         assert_eq!(map.len(), spec.tck_selector_map.len());
     }
 

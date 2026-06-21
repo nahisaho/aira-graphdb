@@ -46,12 +46,15 @@ impl TransactionManager {
     }
 
     pub fn graph_mut(&mut self, tx_id: &str) -> Result<&mut InMemoryGraphStore, GraphDbError> {
-        self.sessions.get_mut(tx_id).map(|s| &mut s.graph).ok_or_else(|| {
-            GraphDbError::new(
-                ErrorCode::RetryableConflict,
-                format!("unknown transaction: {tx_id}"),
-            )
-        })
+        self.sessions
+            .get_mut(tx_id)
+            .map(|s| &mut s.graph)
+            .ok_or_else(|| {
+                GraphDbError::new(
+                    ErrorCode::RetryableConflict,
+                    format!("unknown transaction: {tx_id}"),
+                )
+            })
     }
 
     pub fn commit(&mut self, tx_id: &str) -> Result<(), GraphDbError> {

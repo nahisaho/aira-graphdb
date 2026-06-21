@@ -413,7 +413,7 @@ fn decode_binary_wal(raw: &[u8]) -> Result<Option<PersistedSnapshot>, GraphDbErr
                 return Err(GraphDbError::new(
                     ErrorCode::IncompatibleFormat,
                     format!("invalid wal entry length: {err}"),
-                ))
+                ));
             }
         }
 

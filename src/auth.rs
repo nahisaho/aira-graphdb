@@ -31,45 +31,49 @@ struct JwtClaims {
 pub fn validate_bearer_token(config: &AuthConfig, token: &str) -> Result<(), GraphDbError> {
     let parts: Vec<&str> = token.split('.').collect();
     if parts.len() != 3 {
-        return Err(GraphDbError::new(
-            ErrorCode::AuthFailed,
-            "token must have 3 segments",
-        )
-        .with_detail("auth_reason", "token_segments"));
+        return Err(
+            GraphDbError::new(ErrorCode::AuthFailed, "token must have 3 segments")
+                .with_detail("auth_reason", "token_segments"),
+        );
     }
     if parts[2].is_empty() {
-        return Err(
-            GraphDbError::new(ErrorCode::AuthFailed, "empty signature")
-                .with_detail("auth_reason", "empty_signature"),
-        );
+        return Err(GraphDbError::new(ErrorCode::AuthFailed, "empty signature")
+            .with_detail("auth_reason", "empty_signature"));
     }
 
     let header: JwtHeader = decode_segment(parts[0])?;
     let claims: JwtClaims = decode_segment(parts[1])?;
 
-    if header.alg == "none" || !config.allowed_algorithms.iter().any(|alg| alg == &header.alg) {
-        return Err(GraphDbError::new(
-            ErrorCode::AuthFailed,
-            "token algorithm not allowed",
-        )
-        .with_detail("auth_reason", "algorithm_not_allowed"));
+    if header.alg == "none"
+        || !config
+            .allowed_algorithms
+            .iter()
+            .any(|alg| alg == &header.alg)
+    {
+        return Err(
+            GraphDbError::new(ErrorCode::AuthFailed, "token algorithm not allowed")
+                .with_detail("auth_reason", "algorithm_not_allowed"),
+        );
     }
 
-    let kid = header.kid.ok_or_else(|| GraphDbError::new(ErrorCode::AuthFailed, "missing kid"))?;
-    let kid_count = config.known_kids.iter().filter(|known| *known == &kid).count();
+    let kid = header
+        .kid
+        .ok_or_else(|| GraphDbError::new(ErrorCode::AuthFailed, "missing kid"))?;
+    let kid_count = config
+        .known_kids
+        .iter()
+        .filter(|known| *known == &kid)
+        .count();
     if kid_count != 1 {
-        return Err(GraphDbError::new(
-            ErrorCode::AuthFailed,
-            "kid unresolved or non-unique",
-        )
-        .with_detail("auth_reason", "kid_unresolved"));
+        return Err(
+            GraphDbError::new(ErrorCode::AuthFailed, "kid unresolved or non-unique")
+                .with_detail("auth_reason", "kid_unresolved"),
+        );
     }
 
     if claims.iss != config.expected_issuer {
-        return Err(
-            GraphDbError::new(ErrorCode::AuthFailed, "issuer mismatch")
-                .with_detail("auth_reason", "issuer_mismatch"),
-        );
+        return Err(GraphDbError::new(ErrorCode::AuthFailed, "issuer mismatch")
+            .with_detail("auth_reason", "issuer_mismatch"));
     }
     if claims.aud != config.expected_audience {
         return Err(
@@ -83,10 +87,8 @@ pub fn validate_bearer_token(config: &AuthConfig, token: &str) -> Result<(), Gra
         .expect("system time should be after epoch")
         .as_secs();
     if now >= claims.exp {
-        return Err(
-            GraphDbError::new(ErrorCode::AuthFailed, "token expired")
-                .with_detail("auth_reason", "token_expired"),
-        );
+        return Err(GraphDbError::new(ErrorCode::AuthFailed, "token expired")
+            .with_detail("auth_reason", "token_expired"));
     }
     if let Some(nbf) = claims.nbf
         && now < nbf
@@ -101,17 +103,14 @@ pub fn validate_bearer_token(config: &AuthConfig, token: &str) -> Result<(), Gra
 }
 
 fn decode_segment<T: for<'de> Deserialize<'de>>(segment: &str) -> Result<T, GraphDbError> {
-    let bytes = URL_SAFE_NO_PAD
-        .decode(segment)
-        .map_err(|_| {
-            GraphDbError::new(ErrorCode::AuthFailed, "base64 decode failed")
-                .with_detail("auth_reason", "base64_decode_failed")
-        })?;
-    serde_json::from_slice(&bytes)
-        .map_err(|_| {
-            GraphDbError::new(ErrorCode::AuthFailed, "json decode failed")
-                .with_detail("auth_reason", "json_decode_failed")
-        })
+    let bytes = URL_SAFE_NO_PAD.decode(segment).map_err(|_| {
+        GraphDbError::new(ErrorCode::AuthFailed, "base64 decode failed")
+            .with_detail("auth_reason", "base64_decode_failed")
+    })?;
+    serde_json::from_slice(&bytes).map_err(|_| {
+        GraphDbError::new(ErrorCode::AuthFailed, "json decode failed")
+            .with_detail("auth_reason", "json_decode_failed")
+    })
 }
 
 #[cfg(test)]
@@ -144,7 +143,10 @@ mod tests {
             ("kid", serde_json::Value::String(kid.to_string())),
         ]));
         let claims = encode_segment(HashMap::from([
-            ("iss", serde_json::Value::String("https://issuer.example".to_string())),
+            (
+                "iss",
+                serde_json::Value::String("https://issuer.example".to_string()),
+            ),
             ("aud", serde_json::Value::String("aira-graphdb".to_string())),
             (
                 "exp",
@@ -152,7 +154,10 @@ mod tests {
                     (now as i64 + exp_offset) as u64,
                 )),
             ),
-            ("nbf", serde_json::Value::Number(serde_json::Number::from(now.saturating_sub(1)))),
+            (
+                "nbf",
+                serde_json::Value::Number(serde_json::Number::from(now.saturating_sub(1))),
+            ),
         ]));
         format!("{header}.{claims}.signature")
     }

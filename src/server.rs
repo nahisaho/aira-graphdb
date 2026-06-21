@@ -7,7 +7,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::errors::GraphDbError;
 use crate::protocol::HandshakeRequest;
-use crate::query::{CypherDialect, QueryResult, execute_query_with_dialect, resolve_cypher_dialect};
+use crate::query::{
+    CypherDialect, QueryResult, execute_query_with_dialect, resolve_cypher_dialect,
+};
 use crate::runtime::ServerRuntime;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -100,7 +102,9 @@ impl ServerTransport {
         let mut handles: Vec<JoinHandle<io::Result<()>>> = Vec::new();
         let mut accepted = 0usize;
         loop {
-            if let Some(max) = max_connections && accepted >= max {
+            if let Some(max) = max_connections
+                && accepted >= max
+            {
                 break;
             }
             let (stream, _) = self.listener.accept()?;
@@ -109,7 +113,9 @@ impl ServerTransport {
             handles.push(thread::spawn(move || handle_connection(stream, runtime)));
         }
         for handle in handles {
-            let join_result = handle.join().map_err(|_| io::Error::other("server thread panic"))?;
+            let join_result = handle
+                .join()
+                .map_err(|_| io::Error::other("server thread panic"))?;
             join_result?;
         }
         Ok(())
@@ -225,7 +231,10 @@ fn process_request(
                     Some("AUTH_REQUIRED"),
                     "APP_READY required before begin_tx",
                     None,
-                    std::collections::HashMap::from([("request".to_string(), "begin_tx".to_string())]),
+                    std::collections::HashMap::from([(
+                        "request".to_string(),
+                        "begin_tx".to_string(),
+                    )]),
                 );
                 return ServerResponse::Error {
                     code: "AUTH_REQUIRED".to_string(),
@@ -265,14 +274,10 @@ fn process_request(
                 Err(_) => return lock_poisoned_error(),
             };
             let (resolved_dialect, resolved_query) = resolve_cypher_dialect(&query, dialect);
-            match guard
-                .tx_manager
-                .graph_mut(&tx_id)
-                .and_then(|graph| {
-                    let dialect = resolved_dialect;
-                    execute_query_with_dialect(graph, &resolved_query, dialect)
-                })
-            {
+            match guard.tx_manager.graph_mut(&tx_id).and_then(|graph| {
+                let dialect = resolved_dialect;
+                execute_query_with_dialect(graph, &resolved_query, dialect)
+            }) {
                 Ok(result) => ServerResponse::QueryResult { result },
                 Err(err) => {
                     audit_on_error_with_guard(&guard, &err, Some(&tx_id));
@@ -288,7 +293,10 @@ fn process_request(
                     Some("AUTH_REQUIRED"),
                     "APP_READY required before commit",
                     None,
-                    std::collections::HashMap::from([("request".to_string(), "commit_tx".to_string())]),
+                    std::collections::HashMap::from([(
+                        "request".to_string(),
+                        "commit_tx".to_string(),
+                    )]),
                 );
                 return ServerResponse::Error {
                     code: "AUTH_REQUIRED".to_string(),
@@ -316,7 +324,10 @@ fn process_request(
                     Some("AUTH_REQUIRED"),
                     "APP_READY required before rollback",
                     None,
-                    std::collections::HashMap::from([("request".to_string(), "rollback_tx".to_string())]),
+                    std::collections::HashMap::from([(
+                        "request".to_string(),
+                        "rollback_tx".to_string(),
+                    )]),
                 );
                 return ServerResponse::Error {
                     code: "AUTH_REQUIRED".to_string(),
@@ -593,7 +604,11 @@ mod tests {
         drop(stream);
         handle.join().expect("join").expect("serve ok");
         let events = StorageEngine::new(&db).load_audit_events().expect("audit");
-        assert!(events.iter().any(|e| e.event_type == "AUTH_REQUIRED_REJECTED"));
+        assert!(
+            events
+                .iter()
+                .any(|e| e.event_type == "AUTH_REQUIRED_REJECTED")
+        );
         let _ = std::fs::remove_file(&db);
         let _ = std::fs::remove_file(db.with_extension("wal"));
         let _ = std::fs::remove_file(db.with_extension("audit.log"));
@@ -828,7 +843,9 @@ mod tests {
             },
         );
         match response {
-            ServerResponse::Error { code, .. } => assert_eq!(code, "REFERENTIAL_INTEGRITY_VIOLATION"),
+            ServerResponse::Error { code, .. } => {
+                assert_eq!(code, "REFERENTIAL_INTEGRITY_VIOLATION")
+            }
             _ => panic!("expected referential integrity violation"),
         }
 
@@ -836,9 +853,11 @@ mod tests {
         drop(stream);
         handle.join().expect("join").expect("serve ok");
         let events = StorageEngine::new(&db).load_audit_events().expect("audit");
-        assert!(events
-            .iter()
-            .any(|e| e.event_type == "REFERENTIAL_INTEGRITY_VIOLATION"));
+        assert!(
+            events
+                .iter()
+                .any(|e| e.event_type == "REFERENTIAL_INTEGRITY_VIOLATION")
+        );
         let _ = std::fs::remove_file(&db);
         let _ = std::fs::remove_file(db.with_extension("wal"));
         let _ = std::fs::remove_file(db.with_extension("audit.log"));

@@ -34,7 +34,10 @@ pub fn resolve_row_comparison_strategy(query: &str) -> RowComparisonStrategy {
     }
 }
 
-pub fn execute_query(store: &mut InMemoryGraphStore, query: &str) -> Result<QueryResult, GraphDbError> {
+pub fn execute_query(
+    store: &mut InMemoryGraphStore,
+    query: &str,
+) -> Result<QueryResult, GraphDbError> {
     execute_query_with_dialect(store, query, CypherDialect::OpenCypher9)
 }
 
@@ -108,7 +111,10 @@ pub fn execute_query_with_dialect(
         ErrorCode::UnsupportedFeature,
         "unsupported cypher clause for openCypher 9 profile",
     )
-    .with_detail("unsupported_clause", q.split_whitespace().next().unwrap_or("UNKNOWN")))
+    .with_detail(
+        "unsupported_clause",
+        q.split_whitespace().next().unwrap_or("UNKNOWN"),
+    ))
 }
 
 fn reject_neo4j_compat_extension(query: &str) -> Option<GraphDbError> {
@@ -124,7 +130,10 @@ fn reject_neo4j_compat_extension(query: &str) -> Option<GraphDbError> {
             return Some(
                 GraphDbError::new(
                     ErrorCode::UnsupportedFeature,
-                    format!("unsupported cypher extension for Neo4j compat baseline: {}", feature.clause),
+                    format!(
+                        "unsupported cypher extension for Neo4j compat baseline: {}",
+                        feature.clause
+                    ),
                 )
                 .with_detail("unsupported_clause", &feature.clause),
             );
@@ -216,7 +225,11 @@ fn split_top_level_union(query: &str) -> Option<(Vec<String>, UnionMode)> {
 }
 
 fn is_union_boundary(source: &str, start: usize, end: usize) -> bool {
-    let before_ok = start == 0 || source[..start].chars().last().is_none_or(|c| c.is_whitespace());
+    let before_ok = start == 0
+        || source[..start]
+            .chars()
+            .last()
+            .is_none_or(|c| c.is_whitespace());
     let after_ok = end >= source.len()
         || source[end..]
             .chars()
@@ -331,10 +344,11 @@ fn execute_return_expression(query: &str) -> Result<QueryResult, GraphDbError> {
     if let Some(case_expr) = expr.strip_prefix("CASE ") {
         return execute_case_expression(case_expr);
     }
-    Err(
-        GraphDbError::new(ErrorCode::UnsupportedFeature, "unsupported RETURN expression")
-            .with_detail("unsupported_clause", "RETURN"),
+    Err(GraphDbError::new(
+        ErrorCode::UnsupportedFeature,
+        "unsupported RETURN expression",
     )
+    .with_detail("unsupported_clause", "RETURN"))
 }
 
 fn execute_case_expression(case_expr: &str) -> Result<QueryResult, GraphDbError> {
@@ -381,7 +395,10 @@ fn evaluate_case_condition(condition: &str) -> Result<bool, GraphDbError> {
     Ok(left_value == right_value)
 }
 
-pub fn resolve_cypher_dialect(query: &str, requested: Option<CypherDialect>) -> (CypherDialect, String) {
+pub fn resolve_cypher_dialect(
+    query: &str,
+    requested: Option<CypherDialect>,
+) -> (CypherDialect, String) {
     if let Some(dialect) = requested {
         return (dialect, query.trim().to_string());
     }
@@ -399,7 +416,11 @@ pub fn resolve_cypher_dialect(query: &str, requested: Option<CypherDialect>) -> 
 fn feature_matches_query(query: &str, clause: &str) -> bool {
     let compact = query.to_ascii_uppercase();
     match clause {
-        "UNION" => compact.contains(" UNION ") || compact.ends_with(" UNION") || compact.starts_with("UNION "),
+        "UNION" => {
+            compact.contains(" UNION ")
+                || compact.ends_with(" UNION")
+                || compact.starts_with("UNION ")
+        }
         "UNION ALL" => compact.contains(" UNION ALL "),
         "FOREACH" => compact.contains("FOREACH "),
         "CASE" => compact.contains(" CASE "),
@@ -407,7 +428,8 @@ fn feature_matches_query(query: &str, clause: &str) -> bool {
         "CALL {" => compact.contains("CALL {"),
         "shortestPath" => compact.contains("SHORTESTPATH("),
         "variable-length path" => {
-            (compact.contains("-[*") || compact.contains("[*")) && !compact.contains("SHORTESTPATH(")
+            (compact.contains("-[*") || compact.contains("[*"))
+                && !compact.contains("SHORTESTPATH(")
         }
         "pattern comprehension" => {
             (compact.contains("RETURN [") || compact.contains("WITH [") || compact.contains("= ["))
@@ -441,7 +463,10 @@ fn execute_match(store: &InMemoryGraphStore, query: &str) -> Result<QueryResult,
     Ok(QueryResult::Nodes(nodes))
 }
 
-fn execute_optional_match(store: &InMemoryGraphStore, query: &str) -> Result<QueryResult, GraphDbError> {
+fn execute_optional_match(
+    store: &InMemoryGraphStore,
+    query: &str,
+) -> Result<QueryResult, GraphDbError> {
     let rewritten = query.replacen("OPTIONAL MATCH", "MATCH", 1);
     execute_match(store, &rewritten)
 }
@@ -452,20 +477,22 @@ fn execute_match_relationship(
     optional: bool,
 ) -> Result<QueryResult, GraphDbError> {
     if !query.contains("RETURN n,r,m") {
-        return Err(
-            GraphDbError::new(ErrorCode::UnsupportedFeature, "relationship query must return n,r,m")
-                .with_detail("unsupported_clause", "MATCH"),
-        );
+        return Err(GraphDbError::new(
+            ErrorCode::UnsupportedFeature,
+            "relationship query must return n,r,m",
+        )
+        .with_detail("unsupported_clause", "MATCH"));
     }
     let directed = if query.contains("-[r]->(") {
         true
     } else if query.contains("-[r]-(") {
         false
     } else {
-        return Err(
-            GraphDbError::new(ErrorCode::UnsupportedFeature, "unsupported relationship pattern")
-                .with_detail("unsupported_clause", "MATCH"),
-        );
+        return Err(GraphDbError::new(
+            ErrorCode::UnsupportedFeature,
+            "unsupported relationship pattern",
+        )
+        .with_detail("unsupported_clause", "MATCH"));
     };
     let weight_filter = parse_relationship_weight_filter(query)?;
     let mut rows = build_relationship_rows(store, directed, optional, weight_filter)?;
@@ -491,13 +518,11 @@ fn parse_relationship_weight_filter(query: &str) -> Result<Option<f64>, GraphDbE
     }
     let marker = "r.weight >";
     if !before_return.starts_with(marker) {
-        return Err(
-            GraphDbError::new(
-                ErrorCode::UnsupportedFeature,
-                "WHERE in relationship query supports only r.weight > <num>",
-            )
-            .with_detail("unsupported_clause", "WHERE"),
-        );
+        return Err(GraphDbError::new(
+            ErrorCode::UnsupportedFeature,
+            "WHERE in relationship query supports only r.weight > <num>",
+        )
+        .with_detail("unsupported_clause", "WHERE"));
     }
     let raw = before_return[marker.len()..].trim();
     let value = raw
@@ -533,10 +558,16 @@ fn build_relationship_rows(
             }
         }
         let source = store.get_node(&edge.from).ok_or_else(|| {
-            GraphDbError::new(ErrorCode::ReferentialIntegrityViolation, "missing edge source node")
+            GraphDbError::new(
+                ErrorCode::ReferentialIntegrityViolation,
+                "missing edge source node",
+            )
         })?;
         let target = store.get_node(&edge.to).ok_or_else(|| {
-            GraphDbError::new(ErrorCode::ReferentialIntegrityViolation, "missing edge target node")
+            GraphDbError::new(
+                ErrorCode::ReferentialIntegrityViolation,
+                "missing edge target node",
+            )
         })?;
         rows.push(vec![
             Value::String(source.id.clone()),
@@ -613,8 +644,12 @@ fn execute_call(store: &mut InMemoryGraphStore, query: &str) -> Result<QueryResu
         .strip_prefix("CALL ")
         .ok_or_else(|| syntax_error("invalid CALL syntax"))?
         .trim();
-    let open = call.find('(').ok_or_else(|| syntax_error("CALL requires ("))?;
-    let close = call.rfind(')').ok_or_else(|| syntax_error("CALL requires )"))?;
+    let open = call
+        .find('(')
+        .ok_or_else(|| syntax_error("CALL requires ("))?;
+    let close = call
+        .rfind(')')
+        .ok_or_else(|| syntax_error("CALL requires )"))?;
     if close <= open {
         return Err(syntax_error("invalid CALL argument list"));
     }
@@ -623,10 +658,11 @@ fn execute_call(store: &mut InMemoryGraphStore, query: &str) -> Result<QueryResu
 
     let manifest = load_apoc_procedure_manifest();
     if !manifest.allowed_procedures.iter().any(|p| p.name == name) {
-        return Err(
-            GraphDbError::new(ErrorCode::UnsupportedFeature, format!("unsupported procedure: {name}"))
-                .with_detail("unsupported_clause", "CALL"),
-        );
+        return Err(GraphDbError::new(
+            ErrorCode::UnsupportedFeature,
+            format!("unsupported procedure: {name}"),
+        )
+        .with_detail("unsupported_clause", "CALL"));
     }
 
     match name {
@@ -655,13 +691,21 @@ fn execute_call(store: &mut InMemoryGraphStore, query: &str) -> Result<QueryResu
         "apoc.text.join" => {
             let parts = split_call_args(args_raw);
             if parts.len() != 2 {
-                return Err(GraphDbError::new(ErrorCode::InvalidArgument, "apoc.text.join requires values, delimiter"));
+                return Err(GraphDbError::new(
+                    ErrorCode::InvalidArgument,
+                    "apoc.text.join requires values, delimiter",
+                ));
             }
             let values = parse_list_values(parts[0])?;
             let delimiter = parse_value(parts[1])?;
             let delim = match delimiter {
                 Value::String(v) => v,
-                _ => return Err(GraphDbError::new(ErrorCode::InvalidArgument, "delimiter must be string")),
+                _ => {
+                    return Err(GraphDbError::new(
+                        ErrorCode::InvalidArgument,
+                        "delimiter must be string",
+                    ));
+                }
             };
             let joined = values
                 .iter()
@@ -689,14 +733,27 @@ fn execute_call(store: &mut InMemoryGraphStore, query: &str) -> Result<QueryResu
             }
             let from = match parse_value(parts[0])? {
                 Value::String(v) => v,
-                _ => return Err(GraphDbError::new(ErrorCode::InvalidArgument, "from must be string")),
+                _ => {
+                    return Err(GraphDbError::new(
+                        ErrorCode::InvalidArgument,
+                        "from must be string",
+                    ));
+                }
             };
             let to = match parse_value(parts[1])? {
                 Value::String(v) => v,
-                _ => return Err(GraphDbError::new(ErrorCode::InvalidArgument, "to must be string")),
+                _ => {
+                    return Err(GraphDbError::new(
+                        ErrorCode::InvalidArgument,
+                        "to must be string",
+                    ));
+                }
             };
             if from.trim().is_empty() || to.trim().is_empty() {
-                return Err(GraphDbError::new(ErrorCode::InvalidArgument, "from/to must not be empty"));
+                return Err(GraphDbError::new(
+                    ErrorCode::InvalidArgument,
+                    "from/to must not be empty",
+                ));
             }
             let updated = store.rename_label(&from, &to);
             Ok(QueryResult::Table {
@@ -704,10 +761,11 @@ fn execute_call(store: &mut InMemoryGraphStore, query: &str) -> Result<QueryResu
                 rows: vec![vec![Value::Int64(updated as i64)]],
             })
         }
-        _ => Err(
-            GraphDbError::new(ErrorCode::UnsupportedFeature, format!("unsupported procedure: {name}"))
-                .with_detail("unsupported_clause", "CALL"),
-        ),
+        _ => Err(GraphDbError::new(
+            ErrorCode::UnsupportedFeature,
+            format!("unsupported procedure: {name}"),
+        )
+        .with_detail("unsupported_clause", "CALL")),
     }
 }
 
@@ -722,25 +780,26 @@ fn execute_call_subquery(
     let (inner_query, tail) = split_subquery_body(call)?;
     let tail = tail.trim_start();
     let Some(projection) = tail.strip_prefix("RETURN ") else {
-        return Err(
-            GraphDbError::new(ErrorCode::UnsupportedFeature, "CALL subquery requires RETURN")
-                .with_detail("unsupported_clause", "CALL {"),
-        );
+        return Err(GraphDbError::new(
+            ErrorCode::UnsupportedFeature,
+            "CALL subquery requires RETURN",
+        )
+        .with_detail("unsupported_clause", "CALL {"));
     };
     let inner_result = execute_query_with_dialect(store, inner_query.trim(), dialect)?;
     match projection.trim() {
         "count(*)" => Ok(QueryResult::Table {
             columns: vec!["count".to_string()],
-            rows: vec![vec![Value::Int64(subquery_row_count(&inner_result)? as i64)]],
+            rows: vec![vec![
+                Value::Int64(subquery_row_count(&inner_result)? as i64),
+            ]],
         }),
         "*" => Ok(inner_result),
-        _ => Err(
-            GraphDbError::new(
-                ErrorCode::UnsupportedFeature,
-                "unsupported CALL subquery projection",
-            )
-            .with_detail("unsupported_clause", "CALL {"),
-        ),
+        _ => Err(GraphDbError::new(
+            ErrorCode::UnsupportedFeature,
+            "unsupported CALL subquery projection",
+        )
+        .with_detail("unsupported_clause", "CALL {")),
     }
 }
 
@@ -750,12 +809,15 @@ fn execute_exists_subquery_match(
     dialect: CypherDialect,
 ) -> Result<QueryResult, GraphDbError> {
     let marker = " WHERE EXISTS {";
-    let exists_idx = query.find(marker).ok_or_else(|| syntax_error("invalid EXISTS subquery syntax"))?;
+    let exists_idx = query
+        .find(marker)
+        .ok_or_else(|| syntax_error("invalid EXISTS subquery syntax"))?;
     let outer_match = query[..exists_idx].trim();
     let after_marker = &query[exists_idx + marker.len()..];
     let (inner_query, tail) = split_subquery_body(after_marker)?;
     let mut subquery_store = store.clone();
-    let inner_result = execute_query_with_dialect(&mut subquery_store, inner_query.trim(), dialect)?;
+    let inner_result =
+        execute_query_with_dialect(&mut subquery_store, inner_query.trim(), dialect)?;
     if subquery_row_count(&inner_result)? == 0 {
         return Ok(QueryResult::Nodes(Vec::new()));
     }
@@ -792,13 +854,11 @@ fn subquery_row_count(result: &QueryResult) -> Result<usize, GraphDbError> {
     match result {
         QueryResult::Nodes(nodes) => Ok(nodes.len()),
         QueryResult::Table { rows, .. } => Ok(rows.len()),
-        QueryResult::Ack => Err(
-            GraphDbError::new(
-                ErrorCode::UnsupportedFeature,
-                "subquery must produce rows",
-            )
-            .with_detail("unsupported_clause", "CALL {"),
-        ),
+        QueryResult::Ack => Err(GraphDbError::new(
+            ErrorCode::UnsupportedFeature,
+            "subquery must produce rows",
+        )
+        .with_detail("unsupported_clause", "CALL {")),
     }
 }
 
@@ -823,7 +883,10 @@ fn split_call_args(raw: &str) -> Vec<&str> {
     out.into_iter().filter(|s| !s.is_empty()).collect()
 }
 
-fn execute_create(store: &mut InMemoryGraphStore, query: &str) -> Result<QueryResult, GraphDbError> {
+fn execute_create(
+    store: &mut InMemoryGraphStore,
+    query: &str,
+) -> Result<QueryResult, GraphDbError> {
     if !query.starts_with("CREATE (") || !query.ends_with(')') {
         return Err(syntax_error("invalid CREATE syntax"));
     }
@@ -845,7 +908,10 @@ fn execute_merge(store: &mut InMemoryGraphStore, query: &str) -> Result<QueryRes
     if let Some(existing) = store.find_node_by_label_and_props(Some(&label), &props) {
         if let Some((key, value)) = parse_merge_set_clause(tail, "ON MATCH SET")? {
             let node = store.get_node_mut(&existing.id).ok_or_else(|| {
-                GraphDbError::new(ErrorCode::ReferentialIntegrityViolation, "MERGE target missing")
+                GraphDbError::new(
+                    ErrorCode::ReferentialIntegrityViolation,
+                    "MERGE target missing",
+                )
             })?;
             node.properties.insert(key, value);
         }
@@ -853,7 +919,10 @@ fn execute_merge(store: &mut InMemoryGraphStore, query: &str) -> Result<QueryRes
         let created = store.create_node(vec![label], props);
         if let Some((key, value)) = parse_merge_set_clause(tail, "ON CREATE SET")? {
             let node = store.get_node_mut(&created.id).ok_or_else(|| {
-                GraphDbError::new(ErrorCode::ReferentialIntegrityViolation, "MERGE create target missing")
+                GraphDbError::new(
+                    ErrorCode::ReferentialIntegrityViolation,
+                    "MERGE create target missing",
+                )
             })?;
             node.properties.insert(key, value);
         }
@@ -873,9 +942,9 @@ fn execute_set(store: &mut InMemoryGraphStore, query: &str) -> Result<QueryResul
     }
     let mut parts = content.splitn(3, ' ');
     let _node_kw = parts.next();
-    let node_id = parts
-        .next()
-        .ok_or_else(|| GraphDbError::new(ErrorCode::UnsupportedFeature, "SET NODE requires node id"))?;
+    let node_id = parts.next().ok_or_else(|| {
+        GraphDbError::new(ErrorCode::UnsupportedFeature, "SET NODE requires node id")
+    })?;
     let assignment = parts.next().ok_or_else(|| {
         GraphDbError::new(
             ErrorCode::UnsupportedFeature,
@@ -893,7 +962,10 @@ fn execute_set(store: &mut InMemoryGraphStore, query: &str) -> Result<QueryResul
     Ok(QueryResult::Ack)
 }
 
-fn execute_remove(store: &mut InMemoryGraphStore, query: &str) -> Result<QueryResult, GraphDbError> {
+fn execute_remove(
+    store: &mut InMemoryGraphStore,
+    query: &str,
+) -> Result<QueryResult, GraphDbError> {
     // REMOVE NODE <id> <key>
     let content = query.trim_start_matches("REMOVE ").trim();
     if !content.starts_with("NODE ") {
@@ -904,11 +976,17 @@ fn execute_remove(store: &mut InMemoryGraphStore, query: &str) -> Result<QueryRe
     }
     let mut parts = content.splitn(3, ' ');
     let _node_kw = parts.next();
-    let node_id = parts
-        .next()
-        .ok_or_else(|| GraphDbError::new(ErrorCode::UnsupportedFeature, "REMOVE NODE requires node id"))?;
+    let node_id = parts.next().ok_or_else(|| {
+        GraphDbError::new(
+            ErrorCode::UnsupportedFeature,
+            "REMOVE NODE requires node id",
+        )
+    })?;
     let key = parts.next().ok_or_else(|| {
-        GraphDbError::new(ErrorCode::UnsupportedFeature, "REMOVE NODE requires property key")
+        GraphDbError::new(
+            ErrorCode::UnsupportedFeature,
+            "REMOVE NODE requires property key",
+        )
     })?;
     let key = key.trim().strip_prefix("n.").unwrap_or(key);
     let node = store.get_node_mut(node_id).ok_or_else(|| {
@@ -921,7 +999,10 @@ fn execute_remove(store: &mut InMemoryGraphStore, query: &str) -> Result<QueryRe
     Ok(QueryResult::Ack)
 }
 
-fn execute_delete(store: &mut InMemoryGraphStore, query: &str) -> Result<QueryResult, GraphDbError> {
+fn execute_delete(
+    store: &mut InMemoryGraphStore,
+    query: &str,
+) -> Result<QueryResult, GraphDbError> {
     // DELETE NODE <id>
     // DELETE NODE <id> DETACH
     let parts: Vec<&str> = query.split_whitespace().collect();
@@ -955,10 +1036,9 @@ fn execute_delete(store: &mut InMemoryGraphStore, query: &str) -> Result<QueryRe
 
 fn execute_unwind(query: &str) -> Result<QueryResult, GraphDbError> {
     // UNWIND [1,2,3] AS x RETURN count(x)|collect(x)|sum(x)|avg(x)|min(x)|max(x)|x
-    let content = query
-        .trim()
-        .strip_prefix("UNWIND ")
-        .ok_or_else(|| GraphDbError::new(ErrorCode::UnsupportedFeature, "unsupported UNWIND form"))?;
+    let content = query.trim().strip_prefix("UNWIND ").ok_or_else(|| {
+        GraphDbError::new(ErrorCode::UnsupportedFeature, "unsupported UNWIND form")
+    })?;
     let as_idx = content.find(" AS ").ok_or_else(|| {
         GraphDbError::new(ErrorCode::UnsupportedFeature, "UNWIND requires AS variable")
     })?;
@@ -1009,14 +1089,22 @@ fn execute_unwind(query: &str) -> Result<QueryResult, GraphDbError> {
         let min = numeric.iter().fold(f64::INFINITY, |acc, v| acc.min(*v));
         return Ok(QueryResult::Table {
             columns: vec!["min".to_string()],
-            rows: vec![vec![Value::Float64(if min.is_finite() { min } else { 0.0 })]],
+            rows: vec![vec![Value::Float64(if min.is_finite() {
+                min
+            } else {
+                0.0
+            })]],
         });
     }
     if projection == format!("max({var})") {
         let max = numeric.iter().fold(f64::NEG_INFINITY, |acc, v| acc.max(*v));
         return Ok(QueryResult::Table {
             columns: vec!["max".to_string()],
-            rows: vec![vec![Value::Float64(if max.is_finite() { max } else { 0.0 })]],
+            rows: vec![vec![Value::Float64(if max.is_finite() {
+                max
+            } else {
+                0.0
+            })]],
         });
     }
     if projection == var {
@@ -1025,33 +1113,35 @@ fn execute_unwind(query: &str) -> Result<QueryResult, GraphDbError> {
             rows: values.into_iter().map(|v| vec![v]).collect(),
         });
     }
-    Err(
-        GraphDbError::new(ErrorCode::UnsupportedFeature, "unsupported UNWIND projection")
-            .with_detail("unsupported_clause", "UNWIND"),
+    Err(GraphDbError::new(
+        ErrorCode::UnsupportedFeature,
+        "unsupported UNWIND projection",
     )
+    .with_detail("unsupported_clause", "UNWIND"))
 }
 
 fn normalize_with_query(query: &str) -> Result<String, GraphDbError> {
     // Supported:
     // MATCH (...) WITH n RETURN n
     // MATCH (...) WITH n AS x RETURN x [ORDER BY ... SKIP ... LIMIT ...]
-    let with_idx = query.find(" WITH ").ok_or_else(|| {
-        GraphDbError::new(ErrorCode::UnsupportedFeature, "WITH clause missing")
-    })?;
+    let with_idx = query
+        .find(" WITH ")
+        .ok_or_else(|| GraphDbError::new(ErrorCode::UnsupportedFeature, "WITH clause missing"))?;
     let left = query[..with_idx].trim();
     let right = query[with_idx + 6..].trim();
-    let return_idx = right.find(" RETURN ").ok_or_else(|| {
-        GraphDbError::new(ErrorCode::UnsupportedFeature, "WITH requires RETURN")
-    })?;
+    let return_idx = right
+        .find(" RETURN ")
+        .ok_or_else(|| GraphDbError::new(ErrorCode::UnsupportedFeature, "WITH requires RETURN"))?;
     let projection_ctx = right[..return_idx].trim();
     let return_expr = right[return_idx + 8..].trim();
 
     let (source_var, projected_var) = parse_with_projection(projection_ctx)?;
     if source_var != "n" {
-        return Err(
-            GraphDbError::new(ErrorCode::UnsupportedFeature, "WITH source variable out of scope")
-                .with_detail("unsupported_clause", "WITH"),
-        );
+        return Err(GraphDbError::new(
+            ErrorCode::UnsupportedFeature,
+            "WITH source variable out of scope",
+        )
+        .with_detail("unsupported_clause", "WITH"));
     }
 
     if return_expr == source_var && projected_var != source_var {
@@ -1064,13 +1154,11 @@ fn normalize_with_query(query: &str) -> Result<String, GraphDbError> {
     let rewritten_return = if return_expr.starts_with(projected_var) {
         return_expr.replacen(projected_var, "n", 1)
     } else {
-        return Err(
-            GraphDbError::new(
-                ErrorCode::UnsupportedFeature,
-                "RETURN expression not available in WITH scope",
-            )
-            .with_detail("unsupported_clause", "WITH"),
-        );
+        return Err(GraphDbError::new(
+            ErrorCode::UnsupportedFeature,
+            "RETURN expression not available in WITH scope",
+        )
+        .with_detail("unsupported_clause", "WITH"));
     };
     Ok(format!("{left} RETURN {rewritten_return}"))
 }
@@ -1090,7 +1178,10 @@ fn parse_with_projection(projection: &str) -> Result<(&str, &str), GraphDbError>
     Ok((projection, projection))
 }
 
-fn split_pattern_and_tail<'a>(query: &'a str, prefix: &str) -> Result<(&'a str, &'a str), GraphDbError> {
+fn split_pattern_and_tail<'a>(
+    query: &'a str,
+    prefix: &str,
+) -> Result<(&'a str, &'a str), GraphDbError> {
     let trimmed = query.trim();
     let body = trimmed
         .strip_prefix(prefix)
@@ -1110,7 +1201,10 @@ fn split_pattern_and_tail<'a>(query: &'a str, prefix: &str) -> Result<(&'a str, 
     Err(syntax_error("invalid node pattern"))
 }
 
-fn parse_merge_set_clause(tail: &str, marker: &str) -> Result<Option<(String, Value)>, GraphDbError> {
+fn parse_merge_set_clause(
+    tail: &str,
+    marker: &str,
+) -> Result<Option<(String, Value)>, GraphDbError> {
     let trimmed = tail.trim();
     if trimmed.is_empty() {
         return Ok(None);
@@ -1136,9 +1230,12 @@ fn parse_create_or_merge_payload(
         .strip_prefix('(')
         .and_then(|v| v.strip_suffix(')'))
         .ok_or_else(|| syntax_error("invalid node pattern"))?;
-    let colon = inner
-        .find(':')
-        .ok_or_else(|| GraphDbError::new(ErrorCode::UnsupportedFeature, "label is required in node pattern"))?;
+    let colon = inner.find(':').ok_or_else(|| {
+        GraphDbError::new(
+            ErrorCode::UnsupportedFeature,
+            "label is required in node pattern",
+        )
+    })?;
     let after_colon = &inner[colon + 1..];
     let (label, props) = if let Some(brace) = after_colon.find('{') {
         let label = after_colon[..brace].trim().to_string();
@@ -1175,7 +1272,11 @@ fn parse_assignment(assignment: &str) -> Result<(String, Value), GraphDbError> {
     } else {
         return Err(syntax_error("assignment must be key=value or key:value"));
     };
-    let key = left.trim().strip_prefix("n.").unwrap_or(left.trim()).to_string();
+    let key = left
+        .trim()
+        .strip_prefix("n.")
+        .unwrap_or(left.trim())
+        .to_string();
     let value = parse_value(right.trim())?;
     Ok((key, value))
 }
@@ -1218,14 +1319,18 @@ fn value_as_f64(value: &Value) -> Result<f64, GraphDbError> {
     match value {
         Value::Int64(v) => Ok(*v as f64),
         Value::Float64(v) => Ok(*v),
-        _ => Err(
-            GraphDbError::new(ErrorCode::UnsupportedFeature, "aggregation requires numeric values")
-                .with_detail("unsupported_clause", "UNWIND"),
-        ),
+        _ => Err(GraphDbError::new(
+            ErrorCode::UnsupportedFeature,
+            "aggregation requires numeric values",
+        )
+        .with_detail("unsupported_clause", "UNWIND")),
     }
 }
 
-fn apply_return_modifiers(mut nodes: Vec<GraphNode>, query: &str) -> Result<Vec<GraphNode>, GraphDbError> {
+fn apply_return_modifiers(
+    mut nodes: Vec<GraphNode>,
+    query: &str,
+) -> Result<Vec<GraphNode>, GraphDbError> {
     let (_order_by, skip, limit) = parse_return_modifiers(query)?;
     if let Some(skip) = skip {
         if skip >= nodes.len() {
@@ -1240,7 +1345,9 @@ fn apply_return_modifiers(mut nodes: Vec<GraphNode>, query: &str) -> Result<Vec<
     Ok(nodes)
 }
 
-fn parse_return_modifiers(query: &str) -> Result<(bool, Option<usize>, Option<usize>), GraphDbError> {
+fn parse_return_modifiers(
+    query: &str,
+) -> Result<(bool, Option<usize>, Option<usize>), GraphDbError> {
     let mut order_by = false;
     let mut skip = None;
     let mut limit = None;
@@ -1248,10 +1355,11 @@ fn parse_return_modifiers(query: &str) -> Result<(bool, Option<usize>, Option<us
         let tail = query[idx..].trim();
         order_by = true;
         if !tail.starts_with("ORDER BY n.id") {
-            return Err(
-                GraphDbError::new(ErrorCode::UnsupportedFeature, "only ORDER BY n.id is supported")
-                    .with_detail("unsupported_clause", "ORDER BY"),
-            );
+            return Err(GraphDbError::new(
+                ErrorCode::UnsupportedFeature,
+                "only ORDER BY n.id is supported",
+            )
+            .with_detail("unsupported_clause", "ORDER BY"));
         }
     }
     if let Some(idx) = query.find("SKIP ") {
@@ -1314,7 +1422,10 @@ fn parse_match_filters(query: &str) -> Result<(Option<String>, Option<String>), 
     let mut split = condition.splitn(2, '=');
     let left = split.next().unwrap_or_default().trim();
     let right = split.next().ok_or_else(|| {
-        GraphDbError::new(ErrorCode::UnsupportedFeature, "WHERE supports only equality")
+        GraphDbError::new(
+            ErrorCode::UnsupportedFeature,
+            "WHERE supports only equality",
+        )
     })?;
     if left != "n.id" {
         return Err(GraphDbError::new(
@@ -1329,14 +1440,15 @@ fn parse_match_filters(query: &str) -> Result<(Option<String>, Option<String>), 
             return Err(GraphDbError::new(
                 ErrorCode::UnsupportedFeature,
                 "n.id filter must be string",
-            ))
+            ));
         }
     };
     Ok((label, Some(id)))
 }
 
 fn syntax_error(message: &str) -> GraphDbError {
-    GraphDbError::new(ErrorCode::UnsupportedFeature, message).with_detail("unsupported_clause", "SYNTAX")
+    GraphDbError::new(ErrorCode::UnsupportedFeature, message)
+        .with_detail("unsupported_clause", "SYNTAX")
 }
 
 #[cfg(test)]
@@ -1361,7 +1473,10 @@ mod tests {
         let err = execute_query(&mut store, "CALL db.labels()").expect_err("unsupported");
         assert_eq!(err.code, ErrorCode::UnsupportedFeature);
         let details = err.details.expect("details required");
-        assert_eq!(details.get("unsupported_clause").map(String::as_str), Some("CALL"));
+        assert_eq!(
+            details.get("unsupported_clause").map(String::as_str),
+            Some("CALL")
+        );
     }
 
     #[test]
@@ -1408,7 +1523,10 @@ mod tests {
     fn rejects_neo4j_compat_path_like_clauses_with_specific_clause_details() {
         let cases = [
             ("FOREACH (x IN [1] | CREATE (n:Probe {value:x}))", "FOREACH"),
-            ("MATCH p=shortestPath((a)-[*]->(b)) RETURN p", "shortestPath"),
+            (
+                "MATCH p=shortestPath((a)-[*]->(b)) RETURN p",
+                "shortestPath",
+            ),
             ("MATCH p=(a)-[*1..3]->(b) RETURN p", "variable-length path"),
         ];
 
@@ -1432,13 +1550,15 @@ mod tests {
         let n2 = store.create_node(vec!["B".to_string()], Properties::new());
         let _ = store.create_edge(&n1.id, &n2.id, "REL".to_string(), Properties::new());
 
-        let directed = execute_query(&mut store, "MATCH (n)-[r]->(m) RETURN n,r,m").expect("directed");
+        let directed =
+            execute_query(&mut store, "MATCH (n)-[r]->(m) RETURN n,r,m").expect("directed");
         match directed {
             QueryResult::Table { rows, .. } => assert_eq!(rows.len(), 1),
             _ => panic!("expected table"),
         }
 
-        let undirected = execute_query(&mut store, "MATCH (n)-[r]-(m) RETURN n,r,m").expect("undirected");
+        let undirected =
+            execute_query(&mut store, "MATCH (n)-[r]-(m) RETURN n,r,m").expect("undirected");
         match undirected {
             QueryResult::Table { rows, .. } => assert_eq!(rows.len(), 2),
             _ => panic!("expected table"),
@@ -1465,11 +1585,14 @@ mod tests {
             _ => panic!("expected table"),
         }
 
-        let optional =
-            execute_query(&mut store, "OPTIONAL MATCH (n)-[r]->(m) RETURN n,r,m").expect("optional");
+        let optional = execute_query(&mut store, "OPTIONAL MATCH (n)-[r]->(m) RETURN n,r,m")
+            .expect("optional");
         match optional {
             QueryResult::Table { rows, .. } => {
-                assert!(rows.iter().any(|row| matches!(row.get(1), Some(Value::String(v)) if v == "NULL")));
+                assert!(
+                    rows.iter()
+                        .any(|row| matches!(row.get(1), Some(Value::String(v)) if v == "NULL"))
+                );
             }
             _ => panic!("expected table"),
         }
@@ -1483,7 +1606,10 @@ mod tests {
         let schema = execute_query(&mut store, "CALL apoc.meta.schema()").expect("meta schema");
         match schema {
             QueryResult::Table { columns, .. } => {
-                assert_eq!(columns, vec!["nodes".to_string(), "relationships".to_string()])
+                assert_eq!(
+                    columns,
+                    vec!["nodes".to_string(), "relationships".to_string()]
+                )
             }
             _ => panic!("expected table"),
         }
@@ -1510,8 +1636,8 @@ mod tests {
     fn call_side_effect_procedure_is_atomic_and_returns_fixed_error_code() {
         let mut store = InMemoryGraphStore::new();
         execute_query(&mut store, "CREATE (n:Paper)").expect("create");
-        let renamed =
-            execute_query(&mut store, "CALL apoc.refactor.rename.label('Paper','Doc')").expect("rename");
+        let renamed = execute_query(&mut store, "CALL apoc.refactor.rename.label('Paper','Doc')")
+            .expect("rename");
         match renamed {
             QueryResult::Table { rows, .. } => {
                 assert_eq!(rows[0][0], Value::Int64(1));
@@ -1541,7 +1667,8 @@ mod tests {
         let mut store = InMemoryGraphStore::new();
         execute_query(&mut store, "CREATE (n:Paper)").expect("create");
         execute_query(&mut store, "CREATE (n:Paper)").expect("create 2");
-        let result = execute_query(&mut store, "MATCH (n) WHERE n.id='n2' RETURN n").expect("where");
+        let result =
+            execute_query(&mut store, "MATCH (n) WHERE n.id='n2' RETURN n").expect("where");
         match result {
             QueryResult::Nodes(nodes) => {
                 assert_eq!(nodes.len(), 1);
@@ -1586,10 +1713,14 @@ mod tests {
     fn rejects_with_alias_scope_violation() {
         let mut store = InMemoryGraphStore::new();
         execute_query(&mut store, "CREATE (n:Paper)").expect("create");
-        let err = execute_query(&mut store, "MATCH (n) WITH n AS x RETURN n").expect_err("must fail");
+        let err =
+            execute_query(&mut store, "MATCH (n) WITH n AS x RETURN n").expect_err("must fail");
         assert_eq!(err.code, ErrorCode::UnsupportedFeature);
         let details = err.details.expect("details");
-        assert_eq!(details.get("unsupported_clause").map(String::as_str), Some("WITH"));
+        assert_eq!(
+            details.get("unsupported_clause").map(String::as_str),
+            Some("WITH")
+        );
     }
 
     #[test]
@@ -1621,7 +1752,8 @@ mod tests {
         let mut store = InMemoryGraphStore::new();
         execute_query(&mut store, "CREATE (n:Paper {title='A'})").expect("create");
         execute_query(&mut store, "REMOVE NODE n1 title").expect("remove");
-        let result = execute_query(&mut store, "MATCH (n) WHERE n.id='n1' RETURN n").expect("match");
+        let result =
+            execute_query(&mut store, "MATCH (n) WHERE n.id='n1' RETURN n").expect("match");
         match result {
             QueryResult::Nodes(nodes) => {
                 assert!(!nodes[0].properties.contains_key("title"));
@@ -1633,7 +1765,8 @@ mod tests {
     #[test]
     fn supports_unwind_all_aggregations() {
         let mut store = InMemoryGraphStore::new();
-        let count = execute_query(&mut store, "UNWIND [1,2,3] AS x RETURN count(x)").expect("count");
+        let count =
+            execute_query(&mut store, "UNWIND [1,2,3] AS x RETURN count(x)").expect("count");
         match count {
             QueryResult::Table { columns, rows } => {
                 assert_eq!(columns, vec!["count".to_string()]);
@@ -1641,7 +1774,8 @@ mod tests {
             }
             _ => panic!("expected table"),
         }
-        let collect = execute_query(&mut store, "UNWIND [1,2,3] AS x RETURN collect(x)").expect("collect");
+        let collect =
+            execute_query(&mut store, "UNWIND [1,2,3] AS x RETURN collect(x)").expect("collect");
         match collect {
             QueryResult::Table { columns, rows } => {
                 assert_eq!(columns, vec!["collect".to_string()]);
@@ -1743,17 +1877,13 @@ mod tests {
 
     #[test]
     fn resolves_dialect_from_explicit_override_and_query_prefix() {
-        let (dialect, stripped) = resolve_cypher_dialect(
-            "CYPHER neo4j-compat MATCH (n) RETURN n",
-            None,
-        );
+        let (dialect, stripped) =
+            resolve_cypher_dialect("CYPHER neo4j-compat MATCH (n) RETURN n", None);
         assert_eq!(dialect, CypherDialect::Neo4jCompat);
         assert_eq!(stripped, "MATCH (n) RETURN n");
 
-        let (dialect, stripped) = resolve_cypher_dialect(
-            "MATCH (n) RETURN n",
-            Some(CypherDialect::Neo4jCompat),
-        );
+        let (dialect, stripped) =
+            resolve_cypher_dialect("MATCH (n) RETURN n", Some(CypherDialect::Neo4jCompat));
         assert_eq!(dialect, CypherDialect::Neo4jCompat);
         assert_eq!(stripped, "MATCH (n) RETURN n");
     }

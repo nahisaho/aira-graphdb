@@ -50,12 +50,17 @@ pub fn is_internal_failure_class(failure_class: &str) -> bool {
     INTERNAL_FAILURE_CLASSES.contains(&failure_class)
 }
 
-pub fn validate_request_event_required_fields(event: &NativeRequestAuditEvent) -> Result<(), String> {
+pub fn validate_request_event_required_fields(
+    event: &NativeRequestAuditEvent,
+) -> Result<(), String> {
     if event.error_code.trim().is_empty() {
         return Err("errorCode is required".to_string());
     }
     if !is_allowed_failure_class(&event.failure_class) {
-        return Err(format!("failureClass must be one of {:?}", ALLOWED_FAILURE_CLASSES));
+        return Err(format!(
+            "failureClass must be one of {:?}",
+            ALLOWED_FAILURE_CLASSES
+        ));
     }
     if event.request_id.trim().is_empty() {
         return Err("requestId is required".to_string());
@@ -73,7 +78,13 @@ pub fn validate_crash_event_required_fields(event: &NativeCrashAuditEvent) -> Re
     if event.timestamp.trim().is_empty() {
         return Err("timestamp is required".to_string());
     }
-    if event.last_request_id.as_deref().unwrap_or_default().trim().is_empty() {
+    if event
+        .last_request_id
+        .as_deref()
+        .unwrap_or_default()
+        .trim()
+        .is_empty()
+    {
         return Err("lastRequestId is required".to_string());
     }
     Ok(())

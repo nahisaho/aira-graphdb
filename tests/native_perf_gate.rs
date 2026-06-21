@@ -12,7 +12,6 @@ fn writes_native_bench_artifact_and_meets_gate() {
     assert!(
         report.gate_pass,
         "native perf gate failed: metrics={:?} thresholds={:?}",
-        report.metrics_ms,
-        report.thresholds_ms
+        report.metrics_ms, report.thresholds_ms
     );
 }

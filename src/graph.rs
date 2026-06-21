@@ -139,15 +139,13 @@ impl InMemoryGraphStore {
         props: &Properties,
     ) -> Option<GraphNode> {
         self.nodes.values().find_map(|node| {
-            if let Some(label) = label && !node.labels.iter().any(|l| l == label) {
+            if let Some(label) = label
+                && !node.labels.iter().any(|l| l == label)
+            {
                 return None;
             }
             let all_match = props.iter().all(|(k, v)| node.properties.get(k) == Some(v));
-            if all_match {
-                Some(node.clone())
-            } else {
-                None
-            }
+            if all_match { Some(node.clone()) } else { None }
         })
     }
 
@@ -237,8 +235,14 @@ mod tests {
     #[test]
     fn edge_crud_works() {
         let mut store = InMemoryGraphStore::new();
-        let n1 = store.create_node(vec!["Author".to_string()], props("name", Value::String("A".into())));
-        let n2 = store.create_node(vec!["Paper".to_string()], props("title", Value::String("B".into())));
+        let n1 = store.create_node(
+            vec!["Author".to_string()],
+            props("name", Value::String("A".into())),
+        );
+        let n2 = store.create_node(
+            vec!["Paper".to_string()],
+            props("title", Value::String("B".into())),
+        );
 
         let created = store
             .create_edge(&n1.id, &n2.id, "WROTE".to_string(), Properties::new())

@@ -169,11 +169,19 @@ pub fn run_native_bench_report(rounds: usize) -> NativeBenchReport {
     for i in 0..dataset_vectors {
         passages.push((
             format!("p-{i}"),
-            format!("graph database retrieval benchmark token-{} token-{}", i % 101, (i + 17) % 101),
+            format!(
+                "graph database retrieval benchmark token-{} token-{}",
+                i % 101,
+                (i + 17) % 101
+            ),
         ));
     }
 
-    let query_tokens: Vec<String> = vec!["graph".to_string(), "benchmark".to_string(), "token-3".to_string()];
+    let query_tokens: Vec<String> = vec![
+        "graph".to_string(),
+        "benchmark".to_string(),
+        "token-3".to_string(),
+    ];
     let query_vec = vec![0.5f32; dimension];
 
     let mut get_node_p95_round = Vec::new();
@@ -354,7 +362,10 @@ fn run_native_soak_report_synthetic(profile: NativeSoakProfile) -> NativeSoakRep
 
     let internal_count_by_class = request_audit_events
         .iter()
-        .filter(|e| e.error_code == "REQUEST_EXECUTION_FAILED" && is_internal_failure_class(&e.failure_class))
+        .filter(|e| {
+            e.error_code == "REQUEST_EXECUTION_FAILED"
+                && is_internal_failure_class(&e.failure_class)
+        })
         .count() as u64;
     let internal_failure_rate = if total_requests == 0 {
         0.0
@@ -414,7 +425,11 @@ fn run_native_soak_runtime_sample(profile: NativeSoakProfile) -> Option<NativeSo
 
     for i in 0..sample_requests {
         let request = if i % 10 < 7 {
-            format!(r#"{{"id":{},"method":"get_node","params":{{"corpusId":"c1","nodeId":"n{}"}}}}"#, i + 1, i)
+            format!(
+                r#"{{"id":{},"method":"get_node","params":{{"corpusId":"c1","nodeId":"n{}"}}}}"#,
+                i + 1,
+                i
+            )
         } else {
             format!(
                 r#"{{"id":{},"method":"upsert_nodes","params":{{"nodes":[{{"nodeId":"n{}","corpusId":"c1","layer":"l","ref":{{}},"label":"L"}}]}}}}"#,
@@ -450,7 +465,8 @@ fn run_native_soak_runtime_sample(profile: NativeSoakProfile) -> Option<NativeSo
     let _ = stdout.read_line(&mut _tmp);
     sent += 1;
 
-    let _ = stdin.write_all(br#"{"id":5002,"method":"upsert_nodes","params":{"nodes":[{"nodeId":10}]}}"#);
+    let _ = stdin
+        .write_all(br#"{"id":5002,"method":"upsert_nodes","params":{"nodes":[{"nodeId":10}]}}"#);
     let _ = stdin.write_all(b"\n");
     let _ = stdin.flush();
     _tmp.clear();
@@ -467,7 +483,10 @@ fn run_native_soak_runtime_sample(profile: NativeSoakProfile) -> Option<NativeSo
             let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
                 continue;
             };
-            let error_code = value.get("errorCode").and_then(|v| v.as_str()).unwrap_or_default();
+            let error_code = value
+                .get("errorCode")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default();
             if error_code == "PROCESS_CRASH" {
                 crash_audit_events.push(NativeCrashAuditEvent {
                     error_code: error_code.to_string(),
@@ -476,11 +495,23 @@ fn run_native_soak_runtime_sample(profile: NativeSoakProfile) -> Option<NativeSo
                         .and_then(|v| v.as_str())
                         .unwrap_or_default()
                         .to_string(),
-                    process_exit_code: value.get("processExitCode").and_then(|v| v.as_i64()).map(|v| v as i32),
-                    signal: value.get("signal").and_then(|v| v.as_str()).map(ToString::to_string),
-                    last_request_id: value.get("lastRequestId").and_then(|v| v.as_str()).map(ToString::to_string),
+                    process_exit_code: value
+                        .get("processExitCode")
+                        .and_then(|v| v.as_i64())
+                        .map(|v| v as i32),
+                    signal: value
+                        .get("signal")
+                        .and_then(|v| v.as_str())
+                        .map(ToString::to_string),
+                    last_request_id: value
+                        .get("lastRequestId")
+                        .and_then(|v| v.as_str())
+                        .map(ToString::to_string),
                     uptime_sec: value.get("uptimeSec").and_then(|v| v.as_u64()).unwrap_or(0),
-                    cause: value.get("cause").and_then(|v| v.as_str()).map(ToString::to_string),
+                    cause: value
+                        .get("cause")
+                        .and_then(|v| v.as_str())
+                        .map(ToString::to_string),
                 });
             } else {
                 request_audit_events.push(NativeRequestAuditEvent {
@@ -507,7 +538,10 @@ fn run_native_soak_runtime_sample(profile: NativeSoakProfile) -> Option<NativeSo
 
     let internal_failure_count = request_audit_events
         .iter()
-        .filter(|e| e.error_code == "REQUEST_EXECUTION_FAILED" && is_internal_failure_class(&e.failure_class))
+        .filter(|e| {
+            e.error_code == "REQUEST_EXECUTION_FAILED"
+                && is_internal_failure_class(&e.failure_class)
+        })
         .count() as u64;
     let crash_count = crash_audit_events.len() as u64;
     let total_requests = sent.max(1);
@@ -551,7 +585,10 @@ fn native_sidecar_bin_path() -> Option<String> {
     None
 }
 
-pub fn write_native_soak_report<P: AsRef<Path>>(report: &NativeSoakReport, path: P) -> io::Result<()> {
+pub fn write_native_soak_report<P: AsRef<Path>>(
+    report: &NativeSoakReport,
+    path: P,
+) -> io::Result<()> {
     let path_ref = path.as_ref();
     if let Some(parent) = path_ref.parent() {
         fs::create_dir_all(parent)?;
@@ -565,7 +602,10 @@ pub fn write_native_soak_report<P: AsRef<Path>>(report: &NativeSoakReport, path:
     Ok(())
 }
 
-pub fn write_native_audit_artifact<P: AsRef<Path>>(report: &NativeSoakReport, path: P) -> io::Result<()> {
+pub fn write_native_audit_artifact<P: AsRef<Path>>(
+    report: &NativeSoakReport,
+    path: P,
+) -> io::Result<()> {
     let path_ref = path.as_ref();
     if let Some(parent) = path_ref.parent() {
         fs::create_dir_all(parent)?;
